@@ -1,4 +1,4 @@
-import { definePlugin } from "@utils/types";
+import { definePlugin } from "../utils/plugins";
 import { findByPropsLazy } from "@webpack";
 import { Clipboard, Button, Text, useCallback, useState } from "@webpack/common";
 
