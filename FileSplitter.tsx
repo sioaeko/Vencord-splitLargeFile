@@ -1,7 +1,6 @@
-import { definePlugin } from "@api/plugins";
+import { definePlugin } from "@vendetta/plugin";
 import { findByPropsLazy } from "@webpack";
-import { Clipboard, Button, Text } from "@webpack/common";
-import { useCallback, useState } from "react";
+import { Clipboard, Button, Text, useCallback, useState } from "@webpack/common";
 
 const CHUNK_SIZE = 7.9 * 1024 * 1024; // 7.9MB to stay safely under Discord's 8MB limit
 
