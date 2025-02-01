@@ -1,4 +1,4 @@
-import { definePlugin } from "@vendetta/plugin";
+import { definePlugin } from "@utils/types";
 import { findByPropsLazy } from "@webpack";
 import { Clipboard, Button, Text, useCallback, useState } from "@webpack/common";
 
