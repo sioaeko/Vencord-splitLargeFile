@@ -232,7 +232,7 @@ export default definePlugin({
         }
     },
 
-    private isValidChunk(chunk: any): chunk is FileChunk {
+    isValidChunk(chunk: any): chunk is FileChunk {
         return (
             typeof chunk === 'object' &&
             typeof chunk.index === 'number' &&
