@@ -1,7 +1,6 @@
-import { definePlugin, webpack } from "@vendcord/webpack";
-import { Button, Text } from "@vendcord/components";
-import { useCallback, useState, useEffect } from "react";
-import { Forms } from "@vendcord/ui/components";
+import { definePlugin, webpack } from "@utils/webpack";
+import { Button, Text, Forms } from "@webpack/common";
+import { useCallback, useState, useEffect } from "@webpack/common";
 
 const CHUNK_SIZE = 7.9 * 1024 * 1024;
 const CHUNK_TIMEOUT = 5 * 60 * 1000;
