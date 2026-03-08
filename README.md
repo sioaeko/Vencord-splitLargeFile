@@ -27,7 +27,13 @@ A Vencord/Equicord plugin that bypasses Discord's file size limit by automatical
 
 ## Installation
 
-### Vencord
+There are two ways to install this plugin:
+
+### Method 1: Source Build (Recommended)
+
+Build from source by placing the plugin in the `userplugins` directory.
+
+#### Vencord
 
 1. Clone the [Vencord](https://github.com/Vendicated/Vencord) source:
    ```bash
@@ -51,11 +57,10 @@ A Vencord/Equicord plugin that bypasses Discord's file size limit by automatical
    ```bash
    pnpm inject
    ```
-   Select your Discord installation using the arrow keys and press Enter.
 
 5. Restart Discord, then go to **Settings → Vencord → Plugins**, search for `FileSplitter`, and enable it.
 
-### Equicord
+#### Equicord
 
 1. Clone the [Equicord](https://github.com/Equicord/Equicord) source:
    ```bash
@@ -79,11 +84,44 @@ A Vencord/Equicord plugin that bypasses Discord's file size limit by automatical
    ```bash
    pnpm inject
    ```
-   Select your Discord installation using the arrow keys and press Enter.
 
 5. Restart Discord, then go to **Settings → Equicord → Plugins**, search for `FileSplitter`, and enable it.
 
 > **Note**: The `src/userplugins/` directory is in `.gitignore` and must be created manually.
+
+### Method 2: ASAR Direct Injection (Equicord only)
+
+Directly inject the plugin into the already-installed Equicord ASAR bundle. No source build required.
+
+> **Prerequisites**: Equicord must already be installed, and `@electron/asar` must be available.
+
+1. **Back up your current ASAR** (if not already backed up):
+   ```bash
+   copy "%APPDATA%\Equicord\equicord.asar" "%APPDATA%\Equicord\equicord.asar.bak"
+   ```
+
+2. Clone this repository:
+   ```bash
+   git clone https://github.com/sioaeko/FileSplitter.git
+   cd FileSplitter
+   ```
+
+3. Install the required dependency:
+   ```bash
+   npm install @electron/asar
+   ```
+
+4. Run the injection script:
+   ```bash
+   node inject_full.js
+   ```
+
+5. Restart Discord. The plugin will appear under **Plugins** as `FileSplitter`.
+
+> **Note**: The injection script automatically extracts the ASAR backup, patches `renderer.js` with the plugin code, and writes it back. If something goes wrong, restore with:
+> ```bash
+> copy "%APPDATA%\Equicord\equicord.asar.bak" "%APPDATA%\Equicord\equicord.asar"
+> ```
 
 ## Usage
 
@@ -155,7 +193,7 @@ print(f"Merged {len(parts)} parts into {filename}")
 ## Troubleshooting
 
 **Q: Plugin doesn't show up in the Plugins list**
-A: Run `pnpm build` and `pnpm inject` again, then fully restart Discord.
+A: Run `pnpm build` and `pnpm inject` again, then fully restart Discord. If using Method 2, make sure `equicord.asar.bak` exists and re-run `node inject_full.js`.
 
 **Q: Upload Failed 40005 error**
 A: The file chunk exceeds Discord's upload limit. Try reducing the `CHUNK_SIZE` value in the plugin code (default: 10MB).
@@ -165,6 +203,9 @@ A: All chunks must be received in the same channel. Make sure the plugin is enab
 
 **Q: Upload failed midway**
 A: Check your internet connection and try again. Already-sent parts remain in the channel, so you can manually send the remaining parts.
+
+**Q: "X is Not a constructor" error**
+A: This can happen if the webpack module resolution fails. Try using Method 2 (ASAR injection) instead.
 
 ## Security
 
@@ -183,7 +224,7 @@ MIT License
 
 ## Requirements
 
-- Vencord or Equicord (source build required)
+- Vencord or Equicord (source build required for Method 1)
 - Discord Desktop Client
-- pnpm
 - Node.js 18+
+- pnpm (Method 1) or npm (Method 2)
