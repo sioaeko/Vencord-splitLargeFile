@@ -102,6 +102,7 @@ const SplitButton = () => {
 
             try {
                 const channelId = SelectedChannelStore.getChannelId();
+                const uploadTimestamp = Date.now();
                 for (let i = 0; i < totalChunks; i++) {
                     const start = i * CHUNK_SIZE;
                     const end = Math.min(start + CHUNK_SIZE, file.size);
@@ -113,7 +114,7 @@ const SplitButton = () => {
                         total: totalChunks,
                         originalName: file.name,
                         originalSize: file.size,
-                        timestamp: Date.now()
+                        timestamp: uploadTimestamp
                     };
 
                     const chunkFile = new File(
