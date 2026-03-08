@@ -43,7 +43,7 @@ Build from source by placing the plugin in the `userplugins` directory.
 
 2. Clone this plugin into the userplugins directory:
    ```bash
-   git clone https://github.com/sioaeko/FileSplitter.git src/userplugins/fileSplitter
+   git clone https://github.com/sioaeko/Vencord-splitLargeFile.git src/userplugins/fileSplitter
    cp src/userplugins/fileSplitter/FileSplitter.tsx src/userplugins/fileSplitter/index.tsx
    ```
 
@@ -70,7 +70,7 @@ Build from source by placing the plugin in the `userplugins` directory.
 
 2. Clone this plugin into the userplugins directory:
    ```bash
-   git clone https://github.com/sioaeko/FileSplitter.git src/userplugins/fileSplitter
+   git clone https://github.com/sioaeko/Vencord-splitLargeFile.git src/userplugins/fileSplitter
    cp src/userplugins/fileSplitter/FileSplitter.tsx src/userplugins/fileSplitter/index.tsx
    ```
 
@@ -102,7 +102,7 @@ Directly inject the plugin into the already-installed Equicord ASAR bundle. No s
 
 2. Clone this repository:
    ```bash
-   git clone https://github.com/sioaeko/FileSplitter.git
+   git clone https://github.com/sioaeko/Vencord-splitLargeFile.git
    cd FileSplitter
    ```
 
