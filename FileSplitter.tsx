@@ -67,26 +67,55 @@ function parseChunkMeta(content: string): any | null {
     return null;
 }
 
-// --- Fetch a URL as blob with fallback ---
+// --- Fetch a URL as blob with multiple fallbacks ---
 async function fetchBlob(url: string): Promise<Blob> {
-    // Try direct fetch first
+    // Method 1: plain fetch (no options)
     try {
-        const r = await fetch(url, { mode: "cors" });
+        const r = await fetch(url);
         if (r.ok) return await r.blob();
-    } catch { }
+        console.warn("[FileSplitter] fetch returned", r.status);
+    } catch (e) {
+        console.warn("[FileSplitter] fetch failed:", e);
+    }
 
-    // Fallback: use XMLHttpRequest (bypasses some CSP restrictions in Electron)
-    return new Promise((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("GET", url, true);
-        xhr.responseType = "blob";
-        xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.response);
-            else reject(new Error(`XHR failed: ${xhr.status}`));
-        };
-        xhr.onerror = () => reject(new Error("XHR network error"));
-        xhr.send();
-    });
+    // Method 2: XHR with proper headers
+    try {
+        return await new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open("GET", url, true);
+            xhr.responseType = "blob";
+            xhr.setRequestHeader("Accept", "*/*");
+            xhr.onload = () => {
+                if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.response);
+                else reject(new Error(`XHR failed: ${xhr.status}`));
+            };
+            xhr.onerror = () => reject(new Error("XHR network error"));
+            xhr.send();
+        });
+    } catch (e) {
+        console.warn("[FileSplitter] XHR failed:", e);
+    }
+
+    // Method 3: fetch via Electron's node integration
+    if (IS_DISCORD_DESKTOP) {
+        try {
+            const https = window.require?.("https") ?? window.require?.("http");
+            if (https) {
+                return await new Promise((resolve, reject) => {
+                    https.get(url, (res: any) => {
+                        const chunks: Buffer[] = [];
+                        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+                        res.on("end", () => resolve(new Blob(chunks)));
+                        res.on("error", reject);
+                    }).on("error", reject);
+                });
+            }
+        } catch (e) {
+            console.warn("[FileSplitter] Node https failed:", e);
+        }
+    }
+
+    throw new Error("All fetch methods failed for: " + url.substring(0, 80));
 }
 
 // --- Process a single chunk message ---
