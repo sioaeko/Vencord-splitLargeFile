@@ -67,13 +67,35 @@ function parseChunkMeta(content: string): any | null {
     return null;
 }
 
+// --- Fetch a URL as blob with fallback ---
+async function fetchBlob(url: string): Promise<Blob> {
+    // Try direct fetch first
+    try {
+        const r = await fetch(url, { mode: "cors" });
+        if (r.ok) return await r.blob();
+    } catch { }
+
+    // Fallback: use XMLHttpRequest (bypasses some CSP restrictions in Electron)
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("GET", url, true);
+        xhr.responseType = "blob";
+        xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.response);
+            else reject(new Error(`XHR failed: ${xhr.status}`));
+        };
+        xhr.onerror = () => reject(new Error("XHR network error"));
+        xhr.send();
+    });
+}
+
 // --- Process a single chunk message ---
-function processChunk(c: any, attachmentUrl: string) {
+function processChunk(c: any, attachmentUrl: string, proxyUrl?: string) {
     const k = c.originalName + "_" + c.timestamp;
     if (!cs[k]) cs[k] = { ch: [], lu: Date.now() };
 
     if (!cs[k].ch.some(x => x.index === c.index)) {
-        cs[k].ch.push({ ...c, url: attachmentUrl });
+        cs[k].ch.push({ ...c, url: proxyUrl || attachmentUrl });
         cs[k].lu = Date.now();
     }
 
@@ -94,11 +116,8 @@ function processChunk(c: any, attachmentUrl: string) {
             try {
                 const parts: Blob[] = [];
                 for (let i = 0; i < all.length; i++) {
-                    const r = await fetch(all[i].url);
-                    if (!r.ok) {
-                        throw new Error(`Fetch failed for chunk ${i + 1}: ${r.status}`);
-                    }
-                    parts.push(await r.blob());
+                    console.log("[FileSplitter] Fetching chunk", i + 1, "url:", all[i].url.substring(0, 80));
+                    parts.push(await fetchBlob(all[i].url));
                 }
 
                 const blob = new Blob(parts);
@@ -137,7 +156,7 @@ function scanExistingMessages(channelId: string) {
             const k = c.originalName + "_" + c.timestamp;
             if (!cs[k]) cs[k] = { ch: [], lu: Date.now() };
             if (!cs[k].ch.some(x => x.index === c.index)) {
-                cs[k].ch.push({ ...c, url: att.url });
+                cs[k].ch.push({ ...c, url: att.proxy_url || att.url });
                 cs[k].lu = Date.now();
                 found++;
             }
@@ -145,11 +164,10 @@ function scanExistingMessages(channelId: string) {
 
         if (found > 0) {
             console.log("[FileSplitter] Scanned channel, found", found, "chunks from existing messages");
-            // Check if any file is now complete
             for (const k of Object.keys(cs)) {
                 const entry = cs[k];
                 if (entry.ch.length > 0 && entry.ch.length === entry.ch[0].total) {
-                    processChunk(entry.ch[0], entry.ch[0].url); // trigger merge
+                    processChunk(entry.ch[0], entry.ch[0].url);
                 }
             }
         }
@@ -305,7 +323,7 @@ export default definePlugin({
                 const att = d.message.attachments[0];
                 if (!att?.url) return;
 
-                processChunk(c, att.url);
+                processChunk(c, att.url, att.proxy_url);
             } catch (e) {
                 console.error("[FileSplitter] Handler error:", e);
             }
