@@ -177,15 +177,30 @@ export default definePlugin({
 
         this._onMessageCreate = (d: any) => {
             try {
-                if (!d.message?.content || !d.message?.attachments?.length) return;
-                const c = JSON.parse(d.message.content);
+                console.log("[FileSplitter] MESSAGE_CREATE fired", d?.message?.content?.substring?.(0, 50));
+
+                if (!d.message?.content || !d.message?.attachments?.length) {
+                    return;
+                }
+
+                let c: any;
+                try {
+                    c = JSON.parse(d.message.content);
+                } catch {
+                    return; // not JSON, normal message
+                }
 
                 if (typeof c === "object" && c.type === "FileSplitterChunk" &&
                     typeof c.index === "number" && typeof c.total === "number" &&
                     typeof c.originalName === "string") {
 
                     const att = d.message.attachments[0];
-                    if (!att?.url) return;
+                    console.log("[FileSplitter] Chunk detected:", c.index + 1, "/", c.total, c.originalName, "att url:", att?.url?.substring?.(0, 60));
+
+                    if (!att?.url) {
+                        console.error("[FileSplitter] No attachment URL found!");
+                        return;
+                    }
 
                     const k = c.originalName + "_" + c.timestamp;
                     if (!cs[k]) cs[k] = { ch: [], lu: Date.now() };
@@ -195,14 +210,22 @@ export default definePlugin({
                         cs[k].lu = Date.now();
                     }
 
+                    console.log("[FileSplitter] Chunks collected:", cs[k].ch.length, "/", c.total);
+
                     const all = cs[k]?.ch;
                     if (all && all.length === c.total) {
+                        console.log("[FileSplitter] All chunks received! Starting merge...");
                         all.sort((a, b) => a.index - b.index);
                         (async () => {
                             try {
                                 const parts: Blob[] = [];
                                 for (let i = 0; i < all.length; i++) {
+                                    console.log("[FileSplitter] Fetching chunk", i + 1, "/", all.length);
                                     const r = await fetch(all[i].url);
+                                    if (!r.ok) {
+                                        console.error("[FileSplitter] Fetch failed for chunk", i + 1, r.status, r.statusText);
+                                        return;
+                                    }
                                     parts.push(await r.blob());
                                 }
                                 const blob = new Blob(parts);
@@ -222,12 +245,19 @@ export default definePlugin({
                                     type: Toasts.Type.SUCCESS
                                 });
                             } catch (e) {
-                                console.error("[FileSplitter]", e);
+                                console.error("[FileSplitter] Merge error:", e);
+                                Toasts.show({
+                                    message: `Merge failed: ${e}`,
+                                    id: Toasts.genId(),
+                                    type: Toasts.Type.FAILURE
+                                });
                             }
                         })();
                     }
                 }
-            } catch { }
+            } catch (e) {
+                console.error("[FileSplitter] Handler error:", e);
+            }
         };
 
         FluxDispatcher.subscribe("MESSAGE_CREATE", this._onMessageCreate);
