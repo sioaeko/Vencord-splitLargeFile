@@ -31,11 +31,18 @@ const cs: ChunkStorage = {};
 // --- Download helper: works on both Discord Desktop and Web ---
 async function downloadBlob(blob: Blob, filename: string) {
     if (IS_DISCORD_DESKTOP) {
-        // Discord Desktop blocks a.download, use native save dialog
-        const buffer = await blob.arrayBuffer();
-        DiscordNative.fileManager.saveWithDialog(Buffer.from(buffer), filename);
+        try {
+            const buffer = await blob.arrayBuffer();
+            const data = new Uint8Array(buffer);
+            DiscordNative.fileManager.saveWithDialog(data, filename);
+        } catch (e) {
+            // Fallback: open blob URL in new tab
+            console.warn("[FileSplitter] saveWithDialog failed, using fallback:", e);
+            const url = URL.createObjectURL(blob);
+            window.open(url);
+            setTimeout(() => URL.revokeObjectURL(url), 60000);
+        }
     } else {
-        // Web: use blob URL
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
