@@ -1,9 +1,11 @@
-import definePlugin from "@utils/types";
+import definePlugin, { PluginNative } from "@utils/types";
 import { addChatBarButton, removeChatBarButton, ChatBarButton } from "@api/ChatButtons";
 import { CloudUpload as TCloudUpload } from "@vencord/discord-types";
 import { CloudUploadPlatform } from "@vencord/discord-types/enums";
 import { findLazy } from "@webpack";
 import { Constants, FluxDispatcher, MessageStore, React, RestAPI, SelectedChannelStore, SnowflakeUtils, Toasts } from "@webpack/common";
+
+const Native = VencordNative.pluginHelpers.FileSplitter as PluginNative<typeof import("./native")>;
 
 const CloudUpload: typeof TCloudUpload = findLazy(m => m.prototype?.trackUploadFinished);
 
@@ -67,52 +69,31 @@ function parseChunkMeta(content: string): any | null {
     return null;
 }
 
-// --- Fetch a URL as blob with multiple fallbacks ---
+// --- Fetch a URL as blob ---
 async function fetchBlob(url: string): Promise<Blob> {
-    // Method 1: plain fetch (no options)
+    // Method 1: Native IPC (main process fetch, bypasses CSP)
+    if (IS_DISCORD_DESKTOP) {
+        try {
+            const result = await Native.fetchChunk(url);
+            if (result.status >= 200 && result.status < 300 && result.data) {
+                const binary = atob(result.data);
+                const bytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+                return new Blob([bytes]);
+            }
+            console.warn("[FileSplitter] Native fetch returned", result.status, result.data?.substring(0, 100));
+        } catch (e) {
+            console.warn("[FileSplitter] Native fetch failed:", e);
+        }
+    }
+
+    // Method 2: direct fetch (works on web)
     try {
         const r = await fetch(url);
         if (r.ok) return await r.blob();
         console.warn("[FileSplitter] fetch returned", r.status);
     } catch (e) {
         console.warn("[FileSplitter] fetch failed:", e);
-    }
-
-    // Method 2: XHR with proper headers
-    try {
-        return await new Promise((resolve, reject) => {
-            const xhr = new XMLHttpRequest();
-            xhr.open("GET", url, true);
-            xhr.responseType = "blob";
-            xhr.setRequestHeader("Accept", "*/*");
-            xhr.onload = () => {
-                if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.response);
-                else reject(new Error(`XHR failed: ${xhr.status}`));
-            };
-            xhr.onerror = () => reject(new Error("XHR network error"));
-            xhr.send();
-        });
-    } catch (e) {
-        console.warn("[FileSplitter] XHR failed:", e);
-    }
-
-    // Method 3: fetch via Electron's node integration
-    if (IS_DISCORD_DESKTOP) {
-        try {
-            const https = window.require?.("https") ?? window.require?.("http");
-            if (https) {
-                return await new Promise((resolve, reject) => {
-                    https.get(url, (res: any) => {
-                        const chunks: Buffer[] = [];
-                        res.on("data", (chunk: Buffer) => chunks.push(chunk));
-                        res.on("end", () => resolve(new Blob(chunks)));
-                        res.on("error", reject);
-                    }).on("error", reject);
-                });
-            }
-        } catch (e) {
-            console.warn("[FileSplitter] Node https failed:", e);
-        }
     }
 
     throw new Error("All fetch methods failed for: " + url.substring(0, 80));
