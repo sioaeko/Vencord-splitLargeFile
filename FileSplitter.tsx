@@ -119,12 +119,12 @@ async function fetchBlob(url: string): Promise<Blob> {
 }
 
 // --- Process a single chunk message ---
-function processChunk(c: any, attachmentUrl: string, proxyUrl?: string) {
+function processChunk(c: any, attachmentUrl: string) {
     const k = c.originalName + "_" + c.timestamp;
     if (!cs[k]) cs[k] = { ch: [], lu: Date.now() };
 
     if (!cs[k].ch.some(x => x.index === c.index)) {
-        cs[k].ch.push({ ...c, url: proxyUrl || attachmentUrl });
+        cs[k].ch.push({ ...c, url: attachmentUrl });
         cs[k].lu = Date.now();
     }
 
@@ -185,7 +185,7 @@ function scanExistingMessages(channelId: string) {
             const k = c.originalName + "_" + c.timestamp;
             if (!cs[k]) cs[k] = { ch: [], lu: Date.now() };
             if (!cs[k].ch.some(x => x.index === c.index)) {
-                cs[k].ch.push({ ...c, url: att.proxy_url || att.url });
+                cs[k].ch.push({ ...c, url: att.url });
                 cs[k].lu = Date.now();
                 found++;
             }
@@ -352,7 +352,7 @@ export default definePlugin({
                 const att = d.message.attachments[0];
                 if (!att?.url) return;
 
-                processChunk(c, att.url, att.proxy_url);
+                processChunk(c, att.url);
             } catch (e) {
                 console.error("[FileSplitter] Handler error:", e);
             }
