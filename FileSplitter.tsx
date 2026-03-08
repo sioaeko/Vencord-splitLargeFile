@@ -1,7 +1,11 @@
 import definePlugin from "@utils/types";
 import { addChatBarButton, removeChatBarButton, ChatBarButton } from "@api/ChatButtons";
-import { CloudUploader, Constants, FluxDispatcher, React, RestAPI, SelectedChannelStore, SnowflakeUtils, Toasts } from "@webpack/common";
+import { CloudUpload as TCloudUpload } from "@vencord/discord-types";
 import { CloudUploadPlatform } from "@vencord/discord-types/enums";
+import { findLazy } from "@webpack";
+import { Constants, FluxDispatcher, React, RestAPI, SelectedChannelStore, SnowflakeUtils, Toasts } from "@webpack/common";
+
+const CloudUpload: typeof TCloudUpload = findLazy(m => m.prototype?.trackUploadFinished);
 
 const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB
 const CHUNK_TIMEOUT = 5 * 60 * 1000;
@@ -18,7 +22,7 @@ const cs: ChunkStorage = {};
 function uploadChunk(channelId: string, chunkFile: File, metadata: any): Promise<void> {
     return new Promise((resolve, reject) => {
         try {
-            const uploader = new CloudUploader({ file: chunkFile, platform: CloudUploadPlatform.WEB }, channelId);
+            const uploader = new CloudUpload({ file: chunkFile, platform: CloudUploadPlatform.WEB }, channelId);
 
             uploader.on("complete", () => {
                 RestAPI.post({
@@ -182,7 +186,7 @@ export default definePlugin({
                     const att = d.message.attachments[0];
                     if (!att?.url) return;
 
-                    const k = c.originalName;
+                    const k = c.originalName + "_" + c.timestamp;
                     if (!cs[k]) cs[k] = { ch: [], lu: Date.now() };
 
                     if (!cs[k].ch.some(x => x.index === c.index)) {
@@ -210,6 +214,12 @@ export default definePlugin({
                                 document.body.removeChild(a);
                                 URL.revokeObjectURL(url);
                                 delete cs[k];
+
+                                Toasts.show({
+                                    message: `Merged and downloaded: ${all[0].originalName}`,
+                                    id: Toasts.genId(),
+                                    type: Toasts.Type.SUCCESS
+                                });
                             } catch (e) {
                                 console.error("[FileSplitter]", e);
                             }
@@ -220,7 +230,7 @@ export default definePlugin({
         };
 
         FluxDispatcher.subscribe("MESSAGE_CREATE", this._onMessageCreate);
-        addChatBarButton("FileSplitter", SplitButton);
+        addChatBarButton("FileSplitter", SplitButton, SplitIcon);
     },
 
     stop() {

@@ -43,8 +43,8 @@ Build from source by placing the plugin in the `userplugins` directory.
 
 2. Clone this plugin into the userplugins directory:
    ```bash
-   git clone https://github.com/sioaeko/Vencord-splitLargeFile.git src/userplugins/fileSplitter
-   cp src/userplugins/fileSplitter/FileSplitter.tsx src/userplugins/fileSplitter/index.tsx
+   mkdir -p src/userplugins/fileSplitter
+   curl -o src/userplugins/fileSplitter/index.tsx https://raw.githubusercontent.com/sioaeko/Vencord-splitLargeFile/main/FileSplitter.tsx
    ```
 
 3. Install dependencies and build:
@@ -70,8 +70,8 @@ Build from source by placing the plugin in the `userplugins` directory.
 
 2. Clone this plugin into the userplugins directory:
    ```bash
-   git clone https://github.com/sioaeko/Vencord-splitLargeFile.git src/userplugins/fileSplitter
-   cp src/userplugins/fileSplitter/FileSplitter.tsx src/userplugins/fileSplitter/index.tsx
+   mkdir -p src/userplugins/fileSplitter
+   curl -o src/userplugins/fileSplitter/index.tsx https://raw.githubusercontent.com/sioaeko/Vencord-splitLargeFile/main/FileSplitter.tsx
    ```
 
 3. Install dependencies and build:
