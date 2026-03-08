@@ -3,22 +3,155 @@ import { addChatBarButton, removeChatBarButton, ChatBarButton } from "@api/ChatB
 import { CloudUpload as TCloudUpload } from "@vencord/discord-types";
 import { CloudUploadPlatform } from "@vencord/discord-types/enums";
 import { findLazy } from "@webpack";
-import { Constants, FluxDispatcher, React, RestAPI, SelectedChannelStore, SnowflakeUtils, Toasts } from "@webpack/common";
+import { Constants, FluxDispatcher, MessageStore, React, RestAPI, SelectedChannelStore, SnowflakeUtils, Toasts } from "@webpack/common";
 
 const CloudUpload: typeof TCloudUpload = findLazy(m => m.prototype?.trackUploadFinished);
 
 const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB
-const CHUNK_TIMEOUT = 5 * 60 * 1000;
+const CHUNK_TIMEOUT = 30 * 60 * 1000; // 30 minutes (increased from 5min for slow uploads)
+
+interface ChunkData {
+    index: number;
+    total: number;
+    originalName: string;
+    originalSize: number;
+    timestamp: number;
+    url: string;
+}
 
 interface ChunkStorage {
     [key: string]: {
-        ch: { index: number; total: number; originalName: string; originalSize: number; timestamp: number; url: string; }[];
+        ch: ChunkData[];
         lu: number;
     };
 }
 
 const cs: ChunkStorage = {};
 
+// --- Download helper: works on both Discord Desktop and Web ---
+async function downloadBlob(blob: Blob, filename: string) {
+    if (IS_DISCORD_DESKTOP) {
+        // Discord Desktop blocks a.download, use native save dialog
+        const buffer = await blob.arrayBuffer();
+        DiscordNative.fileManager.saveWithDialog(Buffer.from(buffer), filename);
+    } else {
+        // Web: use blob URL
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+}
+
+// --- Try to parse chunk metadata from message content ---
+function parseChunkMeta(content: string): any | null {
+    try {
+        const c = JSON.parse(content);
+        if (typeof c === "object" && c.type === "FileSplitterChunk" &&
+            typeof c.index === "number" && typeof c.total === "number" &&
+            typeof c.originalName === "string" && typeof c.timestamp === "number") {
+            return c;
+        }
+    } catch { }
+    return null;
+}
+
+// --- Process a single chunk message ---
+function processChunk(c: any, attachmentUrl: string) {
+    const k = c.originalName + "_" + c.timestamp;
+    if (!cs[k]) cs[k] = { ch: [], lu: Date.now() };
+
+    if (!cs[k].ch.some(x => x.index === c.index)) {
+        cs[k].ch.push({ ...c, url: attachmentUrl });
+        cs[k].lu = Date.now();
+    }
+
+    console.log("[FileSplitter] Chunk", c.index + 1, "/", c.total, "for", c.originalName, "| collected:", cs[k].ch.length);
+
+    const all = cs[k]?.ch;
+    if (all && all.length === c.total) {
+        console.log("[FileSplitter] All chunks received! Merging...");
+        all.sort((a, b) => a.index - b.index);
+
+        Toasts.show({
+            message: `Merging ${c.total} parts of ${c.originalName}...`,
+            id: Toasts.genId(),
+            type: Toasts.Type.MESSAGE
+        });
+
+        (async () => {
+            try {
+                const parts: Blob[] = [];
+                for (let i = 0; i < all.length; i++) {
+                    const r = await fetch(all[i].url);
+                    if (!r.ok) {
+                        throw new Error(`Fetch failed for chunk ${i + 1}: ${r.status}`);
+                    }
+                    parts.push(await r.blob());
+                }
+
+                const blob = new Blob(parts);
+                await downloadBlob(blob, all[0].originalName);
+                delete cs[k];
+
+                Toasts.show({
+                    message: `Merged and downloaded: ${all[0].originalName}`,
+                    id: Toasts.genId(),
+                    type: Toasts.Type.SUCCESS
+                });
+            } catch (e: any) {
+                console.error("[FileSplitter] Merge error:", e);
+                Toasts.show({
+                    message: `Merge failed: ${e?.message ?? e}`,
+                    id: Toasts.genId(),
+                    type: Toasts.Type.FAILURE
+                });
+            }
+        })();
+    }
+}
+
+// --- Scan existing messages in channel for chunks ---
+function scanExistingMessages(channelId: string) {
+    try {
+        const messages = MessageStore.getMessages(channelId)?.toArray?.() ?? [];
+        let found = 0;
+        for (const msg of messages) {
+            if (!msg.content || !msg.attachments?.length) continue;
+            const c = parseChunkMeta(msg.content);
+            if (!c) continue;
+            const att = msg.attachments[0];
+            if (!att?.url) continue;
+
+            const k = c.originalName + "_" + c.timestamp;
+            if (!cs[k]) cs[k] = { ch: [], lu: Date.now() };
+            if (!cs[k].ch.some(x => x.index === c.index)) {
+                cs[k].ch.push({ ...c, url: att.url });
+                cs[k].lu = Date.now();
+                found++;
+            }
+        }
+
+        if (found > 0) {
+            console.log("[FileSplitter] Scanned channel, found", found, "chunks from existing messages");
+            // Check if any file is now complete
+            for (const k of Object.keys(cs)) {
+                const entry = cs[k];
+                if (entry.ch.length > 0 && entry.ch.length === entry.ch[0].total) {
+                    processChunk(entry.ch[0], entry.ch[0].url); // trigger merge
+                }
+            }
+        }
+    } catch (e) {
+        console.error("[FileSplitter] Scan error:", e);
+    }
+}
+
+// --- Upload ---
 function uploadChunk(channelId: string, chunkFile: File, metadata: any): Promise<void> {
     return new Promise((resolve, reject) => {
         try {
@@ -40,17 +173,10 @@ function uploadChunk(channelId: string, chunkFile: File, metadata: any): Promise
                             uploaded_filename: uploader.uploadedFilename
                         }]
                     }
-                }).then(() => {
-                    resolve();
-                }).catch((e: any) => {
-                    reject(new Error("Send failed: " + JSON.stringify(e)));
-                });
+                }).then(() => resolve()).catch((e: any) => reject(new Error("Send failed: " + JSON.stringify(e))));
             });
 
-            uploader.on("error", (e: any) => {
-                reject(new Error("Upload failed: " + JSON.stringify(e)));
-            });
-
+            uploader.on("error", (e: any) => reject(new Error("Upload failed: " + JSON.stringify(e))));
             uploader.upload();
         } catch (e: any) {
             reject(new Error(e?.message ?? JSON.stringify(e)));
@@ -58,6 +184,7 @@ function uploadChunk(channelId: string, chunkFile: File, metadata: any): Promise
     });
 }
 
+// --- UI Components ---
 const SplitIcon = () => (
     <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
         <path d="M14 2H6C4.9 2 4 2.9 4 4v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zM6 20V4h7v5h5v11H6zm8-4h-4v-2h4v-2l3 3-3 3v-2z" />
@@ -75,29 +202,17 @@ const SplitButton = () => {
             if (!file) return;
 
             if (file.size > 500 * 1024 * 1024) {
-                Toasts.show({
-                    message: "File exceeds 500MB limit.",
-                    id: Toasts.genId(),
-                    type: Toasts.Type.FAILURE
-                });
+                Toasts.show({ message: "File exceeds 500MB limit.", id: Toasts.genId(), type: Toasts.Type.FAILURE });
                 return;
             }
 
             if (file.size <= CHUNK_SIZE) {
-                Toasts.show({
-                    message: "File is small enough to send directly.",
-                    id: Toasts.genId(),
-                    type: Toasts.Type.MESSAGE
-                });
+                Toasts.show({ message: "File is small enough to send directly.", id: Toasts.genId(), type: Toasts.Type.MESSAGE });
                 return;
             }
 
             const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
-            Toasts.show({
-                message: `Splitting ${file.name} into ${totalChunks} chunks...`,
-                id: Toasts.genId(),
-                type: Toasts.Type.MESSAGE
-            });
+            Toasts.show({ message: `Splitting ${file.name} into ${totalChunks} chunks...`, id: Toasts.genId(), type: Toasts.Type.MESSAGE });
             setStatus("0%");
 
             try {
@@ -127,18 +242,10 @@ const SplitButton = () => {
                     setStatus(`${Math.round(((i + 1) / totalChunks) * 100)}%`);
                 }
 
-                Toasts.show({
-                    message: `Uploaded ${totalChunks} parts for ${file.name}`,
-                    id: Toasts.genId(),
-                    type: Toasts.Type.SUCCESS
-                });
+                Toasts.show({ message: `Uploaded ${totalChunks} parts for ${file.name}`, id: Toasts.genId(), type: Toasts.Type.SUCCESS });
                 setStatus(null);
             } catch (e: any) {
-                Toasts.show({
-                    message: `Error: ${e?.message ?? JSON.stringify(e)}`,
-                    id: Toasts.genId(),
-                    type: Toasts.Type.FAILURE
-                });
+                Toasts.show({ message: `Error: ${e?.message ?? JSON.stringify(e)}`, id: Toasts.genId(), type: Toasts.Type.FAILURE });
                 setStatus(null);
             }
         };
@@ -154,6 +261,7 @@ const SplitButton = () => {
     );
 };
 
+// --- Plugin Definition ---
 export default definePlugin({
     name: "FileSplitter",
     description: "Splits large files into 10MB chunks to bypass Discord's default limit.",
@@ -165,107 +273,56 @@ export default definePlugin({
     ],
 
     _onMessageCreate: undefined as any,
+    _onChannelSelect: undefined as any,
     _cleanupInterval: undefined as any,
 
     start() {
+        // Garbage collection interval
         this._cleanupInterval = setInterval(() => {
             const now = Date.now();
             Object.keys(cs).forEach(k => {
-                if (now - cs[k].lu > CHUNK_TIMEOUT) delete cs[k];
+                if (now - cs[k].lu > CHUNK_TIMEOUT) {
+                    console.log("[FileSplitter] Expired chunks for:", k);
+                    delete cs[k];
+                }
             });
         }, 60000);
 
+        // Real-time chunk detection
         this._onMessageCreate = (d: any) => {
             try {
-                console.log("[FileSplitter] MESSAGE_CREATE fired", d?.message?.content?.substring?.(0, 50));
+                if (!d.message?.content || !d.message?.attachments?.length) return;
+                const c = parseChunkMeta(d.message.content);
+                if (!c) return;
 
-                if (!d.message?.content || !d.message?.attachments?.length) {
-                    return;
-                }
+                const att = d.message.attachments[0];
+                if (!att?.url) return;
 
-                let c: any;
-                try {
-                    c = JSON.parse(d.message.content);
-                } catch {
-                    return; // not JSON, normal message
-                }
-
-                if (typeof c === "object" && c.type === "FileSplitterChunk" &&
-                    typeof c.index === "number" && typeof c.total === "number" &&
-                    typeof c.originalName === "string") {
-
-                    const att = d.message.attachments[0];
-                    console.log("[FileSplitter] Chunk detected:", c.index + 1, "/", c.total, c.originalName, "att url:", att?.url?.substring?.(0, 60));
-
-                    if (!att?.url) {
-                        console.error("[FileSplitter] No attachment URL found!");
-                        return;
-                    }
-
-                    const k = c.originalName + "_" + c.timestamp;
-                    if (!cs[k]) cs[k] = { ch: [], lu: Date.now() };
-
-                    if (!cs[k].ch.some(x => x.index === c.index)) {
-                        cs[k].ch.push({ ...c, url: att.url });
-                        cs[k].lu = Date.now();
-                    }
-
-                    console.log("[FileSplitter] Chunks collected:", cs[k].ch.length, "/", c.total);
-
-                    const all = cs[k]?.ch;
-                    if (all && all.length === c.total) {
-                        console.log("[FileSplitter] All chunks received! Starting merge...");
-                        all.sort((a, b) => a.index - b.index);
-                        (async () => {
-                            try {
-                                const parts: Blob[] = [];
-                                for (let i = 0; i < all.length; i++) {
-                                    console.log("[FileSplitter] Fetching chunk", i + 1, "/", all.length);
-                                    const r = await fetch(all[i].url);
-                                    if (!r.ok) {
-                                        console.error("[FileSplitter] Fetch failed for chunk", i + 1, r.status, r.statusText);
-                                        return;
-                                    }
-                                    parts.push(await r.blob());
-                                }
-                                const blob = new Blob(parts);
-                                const url = URL.createObjectURL(blob);
-                                const a = document.createElement("a");
-                                a.href = url;
-                                a.download = all[0].originalName;
-                                document.body.appendChild(a);
-                                a.click();
-                                document.body.removeChild(a);
-                                URL.revokeObjectURL(url);
-                                delete cs[k];
-
-                                Toasts.show({
-                                    message: `Merged and downloaded: ${all[0].originalName}`,
-                                    id: Toasts.genId(),
-                                    type: Toasts.Type.SUCCESS
-                                });
-                            } catch (e) {
-                                console.error("[FileSplitter] Merge error:", e);
-                                Toasts.show({
-                                    message: `Merge failed: ${e}`,
-                                    id: Toasts.genId(),
-                                    type: Toasts.Type.FAILURE
-                                });
-                            }
-                        })();
-                    }
-                }
+                processChunk(c, att.url);
             } catch (e) {
                 console.error("[FileSplitter] Handler error:", e);
             }
         };
 
+        // Scan existing messages when switching channels
+        this._onChannelSelect = (d: any) => {
+            if (d.channelId) {
+                scanExistingMessages(d.channelId);
+            }
+        };
+
         FluxDispatcher.subscribe("MESSAGE_CREATE", this._onMessageCreate);
+        FluxDispatcher.subscribe("CHANNEL_SELECT", this._onChannelSelect);
         addChatBarButton("FileSplitter", SplitButton, SplitIcon);
+
+        // Scan current channel on plugin start
+        const currentChannel = SelectedChannelStore.getChannelId();
+        if (currentChannel) scanExistingMessages(currentChannel);
     },
 
     stop() {
         if (this._onMessageCreate) FluxDispatcher.unsubscribe("MESSAGE_CREATE", this._onMessageCreate);
+        if (this._onChannelSelect) FluxDispatcher.unsubscribe("CHANNEL_SELECT", this._onChannelSelect);
         removeChatBarButton("FileSplitter");
         if (this._cleanupInterval) clearInterval(this._cleanupInterval);
     }
