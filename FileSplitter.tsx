@@ -1,240 +1,157 @@
 import definePlugin from "@utils/types";
-import { findByPropsLazy } from "@webpack";
-import { Button, FluxDispatcher, React, Text } from "@webpack/common";
-import { addChatBarButton, removeChatBarButton, ChatBarButton, ChatBarButtonFactory } from "@api/ChatButtons";
+import { addChatBarButton, removeChatBarButton, ChatBarButton } from "@api/ChatButtons";
+import { CloudUploader, Constants, FluxDispatcher, React, RestAPI, SelectedChannelStore, SnowflakeUtils, Toasts } from "@webpack/common";
+import { CloudUploadPlatform } from "@vencord/discord-types/enums";
 
-const { useState, useCallback } = React;
-
-// Optimized chunk size. Set to 24.5MB, just under Discord's 25MB default limit for non-Nitro users.
-const CHUNK_SIZE = 24.5 * 1024 * 1024;
-const CHUNK_TIMEOUT = 5 * 60 * 1000; // 5-minute cache expiration for incomplete files.
-
-/**
- * Metadata structure for a file chunk.
- * This object is JSON-stringified and sent as the message content,
- * excluding the binary payload which is sent as an attachment.
- */
-interface FileChunkMetadata {
-    type: "FileSplitterChunk";
-    index: number;
-    total: number;
-    originalName: string;
-    originalSize: number;
-    timestamp: number;
-}
-
-/**
- * Represents a chunk stored in the local ChunkManager.
- */
-interface StoredFileChunk extends FileChunkMetadata {
-    url: string;
-}
+const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB
+const CHUNK_TIMEOUT = 5 * 60 * 1000;
 
 interface ChunkStorage {
     [key: string]: {
-        chunks: StoredFileChunk[];
-        lastUpdated: number;
+        ch: { index: number; total: number; originalName: string; originalSize: number; timestamp: number; url: string; }[];
+        lu: number;
     };
 }
 
-// --- Webpack Module Resolution ---
-const UploadHandler = findByPropsLazy("upload", "instantBatchUpload");
-const ChannelStore = findByPropsLazy("getChannelId");
+const cs: ChunkStorage = {};
 
-/**
- * Manages the assembly of file chunks received from messages.
- */
-class ChunkManager {
-    private static storage: ChunkStorage = {};
+function uploadChunk(channelId: string, chunkFile: File, metadata: any): Promise<void> {
+    return new Promise((resolve, reject) => {
+        try {
+            const uploader = new CloudUploader({ file: chunkFile, platform: CloudUploadPlatform.WEB }, channelId);
 
-    static addChunk(chunk: StoredFileChunk): void {
-        const key = chunk.originalName;
-        if (!this.storage[key]) {
-            this.storage[key] = {
-                chunks: [],
-                lastUpdated: Date.now()
-            };
+            uploader.on("complete", () => {
+                RestAPI.post({
+                    url: Constants.Endpoints.MESSAGES(channelId),
+                    body: {
+                        flags: 0,
+                        channel_id: channelId,
+                        content: JSON.stringify(metadata),
+                        nonce: SnowflakeUtils.fromTimestamp(Date.now()),
+                        sticker_ids: [],
+                        type: 0,
+                        attachments: [{
+                            id: "0",
+                            filename: uploader.filename,
+                            uploaded_filename: uploader.uploadedFilename
+                        }]
+                    }
+                }).then(() => {
+                    resolve();
+                }).catch((e: any) => {
+                    reject(new Error("Send failed: " + JSON.stringify(e)));
+                });
+            });
+
+            uploader.on("error", (e: any) => {
+                reject(new Error("Upload failed: " + JSON.stringify(e)));
+            });
+
+            uploader.upload();
+        } catch (e: any) {
+            reject(new Error(e?.message ?? JSON.stringify(e)));
         }
-
-        if (!this.storage[key].chunks.some(c => c.index === chunk.index)) {
-            this.storage[key].chunks.push(chunk);
-            this.storage[key].lastUpdated = Date.now();
-        }
-    }
-
-    static getChunks(fileName: string): StoredFileChunk[] | null {
-        return this.storage[fileName]?.chunks || null;
-    }
-
-    static cleanOldChunks(): void {
-        const now = Date.now();
-        Object.keys(this.storage).forEach(key => {
-            if (now - this.storage[key].lastUpdated > CHUNK_TIMEOUT) {
-                delete this.storage[key];
-                console.log(`[FileSplitter] Garbage collected stale chunks for: ${key}`);
-            }
-        });
-    }
+    });
 }
 
-// --- Core Utilities ---
-
-const isValidChunk = (chunk: any): chunk is FileChunkMetadata => {
-    return (
-        typeof chunk === "object" &&
-        chunk.type === "FileSplitterChunk" &&
-        typeof chunk.index === "number" &&
-        typeof chunk.total === "number" &&
-        typeof chunk.originalName === "string" &&
-        typeof chunk.originalSize === "number" &&
-        typeof chunk.timestamp === "number"
-    );
-};
-
-const handleFileMerge = async (chunks: StoredFileChunk[]) => {
-    try {
-        chunks.sort((a, b) => a.index - b.index);
-
-        const blobParts: Blob[] = [];
-        for (const chunk of chunks) {
-            const response = await fetch(chunk.url);
-            if (!response.ok) {
-                throw new Error(`Failed to fetch chunk ${chunk.index + 1} from ${chunk.url}`);
-            }
-            const blob = await response.blob();
-            blobParts.push(blob);
-        }
-
-        const finalBlob = new Blob(blobParts);
-        const finalFile = new File([finalBlob], chunks[0].originalName);
-
-        const url = URL.createObjectURL(finalFile);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = finalFile.name;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-
-        console.log(`[FileSplitter] File merged and downloaded successfully: ${finalFile.name}`);
-    } catch (error) {
-        console.error("[FileSplitter] Error during file merge process:", error);
-    }
-};
-
-// --- React Component: UI ---
-
-const SplitFileComponent = () => {
-    const [status, setStatus] = useState("");
-    const [isUploading, setIsUploading] = useState(false);
-    const [progress, setProgress] = useState(0);
-
-    const handleFileSplit = useCallback(async (file: File) => {
-        try {
-            setIsUploading(true);
-            const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
-
-            for (let i = 0; i < totalChunks; i++) {
-                const start = i * CHUNK_SIZE;
-                const end = Math.min(start + CHUNK_SIZE, file.size);
-
-                const chunkBlob = file.slice(start, end);
-
-                const metadata: FileChunkMetadata = {
-                    type: "FileSplitterChunk",
-                    index: i,
-                    total: totalChunks,
-                    originalName: file.name,
-                    originalSize: file.size,
-                    timestamp: Date.now()
-                };
-
-                const chunkFile = new File(
-                    [chunkBlob],
-                    `${file.name}.part${String(i + 1).padStart(3, "0")}`,
-                    { type: "application/octet-stream" }
-                );
-
-                await UploadHandler.upload({
-                    file: chunkFile,
-                    message: JSON.stringify(metadata),
-                    channelId: ChannelStore.getChannelId()
-                });
-
-                setProgress(Math.round(((i + 1) / totalChunks) * 100));
-            }
-
-            setStatus(`Successfully uploaded ${totalChunks} parts for ${file.name}`);
-        } catch (error: any) {
-            setStatus(`Error: ${error.message}`);
-        } finally {
-            setIsUploading(false);
-            setProgress(0);
-        }
-    }, []);
-
-    const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-
-        if (file.size > 500 * 1024 * 1024) {
-            setStatus("File exceeds 500MB. This is not supported.");
-            return;
-        }
-
-        if (file.size > CHUNK_SIZE) {
-            setStatus(`Splitting ${file.name} into ~${Math.ceil(file.size / CHUNK_SIZE)} chunks...`);
-            await handleFileSplit(file);
-        } else {
-            setStatus("File is small enough to be sent directly.");
-        }
-
-        e.target.value = "";
-    }, [handleFileSplit]);
-
-    return (
-        <div style={{ padding: "8px", borderTop: "1px solid var(--background-modifier-accent)" }}>
-            <input
-                type="file"
-                onChange={handleFileSelect}
-                style={{ display: "none" }}
-                id="file-splitter-input"
-            />
-            <Button
-                onClick={() => document.getElementById("file-splitter-input")?.click()}
-                disabled={isUploading}
-            >
-                {isUploading ? `Uploading... (${progress}%)` : "Upload Large File"}
-            </Button>
-            {status && (
-                <Text variant="text-sm/normal" style={{ marginLeft: "8px", verticalAlign: "middle" }}>
-                    {status}
-                </Text>
-            )}
-        </div>
-    );
-};
-
-// SVG icon for the chat bar button
-const SplitFileIcon = () => (
+const SplitIcon = () => (
     <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
         <path d="M14 2H6C4.9 2 4 2.9 4 4v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zM6 20V4h7v5h5v11H6zm8-4h-4v-2h4v-2l3 3-3 3v-2z" />
     </svg>
 );
 
-// ChatBarButton render function
-const SplitFileButton: ChatBarButtonFactory = () => (
-    <ChatBarButton tooltip="Upload Large File" onClick={() => document.getElementById("file-splitter-input")?.click()}>
-        <SplitFileIcon />
-    </ChatBarButton>
-);
+const SplitButton = () => {
+    const [status, setStatus] = React.useState<string | null>(null);
 
-// --- Vencord Plugin Definition ---
+    function doUpload() {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.onchange = async () => {
+            const file = input.files?.[0];
+            if (!file) return;
+
+            if (file.size > 500 * 1024 * 1024) {
+                Toasts.show({
+                    message: "File exceeds 500MB limit.",
+                    id: Toasts.genId(),
+                    type: Toasts.Type.FAILURE
+                });
+                return;
+            }
+
+            if (file.size <= CHUNK_SIZE) {
+                Toasts.show({
+                    message: "File is small enough to send directly.",
+                    id: Toasts.genId(),
+                    type: Toasts.Type.MESSAGE
+                });
+                return;
+            }
+
+            const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+            Toasts.show({
+                message: `Splitting ${file.name} into ${totalChunks} chunks...`,
+                id: Toasts.genId(),
+                type: Toasts.Type.MESSAGE
+            });
+            setStatus("0%");
+
+            try {
+                const channelId = SelectedChannelStore.getChannelId();
+                for (let i = 0; i < totalChunks; i++) {
+                    const start = i * CHUNK_SIZE;
+                    const end = Math.min(start + CHUNK_SIZE, file.size);
+                    const chunkBlob = file.slice(start, end);
+
+                    const metadata = {
+                        type: "FileSplitterChunk",
+                        index: i,
+                        total: totalChunks,
+                        originalName: file.name,
+                        originalSize: file.size,
+                        timestamp: Date.now()
+                    };
+
+                    const chunkFile = new File(
+                        [chunkBlob],
+                        `${file.name}.part${String(i + 1).padStart(3, "0")}`,
+                        { type: "application/octet-stream" }
+                    );
+
+                    await uploadChunk(channelId, chunkFile, metadata);
+                    setStatus(`${Math.round(((i + 1) / totalChunks) * 100)}%`);
+                }
+
+                Toasts.show({
+                    message: `Uploaded ${totalChunks} parts for ${file.name}`,
+                    id: Toasts.genId(),
+                    type: Toasts.Type.SUCCESS
+                });
+                setStatus(null);
+            } catch (e: any) {
+                Toasts.show({
+                    message: `Error: ${e?.message ?? JSON.stringify(e)}`,
+                    id: Toasts.genId(),
+                    type: Toasts.Type.FAILURE
+                });
+                setStatus(null);
+            }
+        };
+        input.click();
+    }
+
+    const label = status ? `Uploading ${status}` : "Split & Upload";
+
+    return (
+        <ChatBarButton tooltip={label} onClick={status ? () => {} : doUpload}>
+            <SplitIcon />
+        </ChatBarButton>
+    );
+};
 
 export default definePlugin({
     name: "FileSplitter",
-    description: "Splits large files into 25MB chunks to bypass Discord's default limit.",
+    description: "Splits large files into 10MB chunks to bypass Discord's default limit.",
     authors: [
         {
             id: 1234567890n,
@@ -242,50 +159,73 @@ export default definePlugin({
         },
     ],
 
-    chunkCleanupInterval: null as ReturnType<typeof setInterval> | null,
-
-    onMessageCreate({ message }: { message: any }) {
-        try {
-            if (!message.content || !message.attachments?.length) return;
-
-            const chunkData = JSON.parse(message.content);
-
-            if (isValidChunk(chunkData)) {
-                const attachment = message.attachments[0];
-                if (!attachment?.url) return;
-
-                const storedChunk: StoredFileChunk = {
-                    ...chunkData,
-                    url: attachment.url
-                };
-
-                ChunkManager.addChunk(storedChunk);
-
-                const chunks = ChunkManager.getChunks(chunkData.originalName);
-                if (chunks && chunks.length === chunkData.total) {
-                    console.log(`[FileSplitter] All ${chunkData.total} chunks received for ${chunkData.originalName}. Initiating merge...`);
-                    handleFileMerge(chunks);
-                }
-            }
-        } catch {
-            // Non-chunk messages; JSON.parse will fail, which is expected.
-        }
-    },
+    _onMessageCreate: undefined as any,
+    _cleanupInterval: undefined as any,
 
     start() {
-        this.chunkCleanupInterval = setInterval(() => {
-            ChunkManager.cleanOldChunks();
+        this._cleanupInterval = setInterval(() => {
+            const now = Date.now();
+            Object.keys(cs).forEach(k => {
+                if (now - cs[k].lu > CHUNK_TIMEOUT) delete cs[k];
+            });
         }, 60000);
 
-        FluxDispatcher.subscribe("MESSAGE_CREATE", this.onMessageCreate);
-        addChatBarButton("FileSplitter", SplitFileButton, SplitFileIcon);
+        this._onMessageCreate = (d: any) => {
+            try {
+                if (!d.message?.content || !d.message?.attachments?.length) return;
+                const c = JSON.parse(d.message.content);
+
+                if (typeof c === "object" && c.type === "FileSplitterChunk" &&
+                    typeof c.index === "number" && typeof c.total === "number" &&
+                    typeof c.originalName === "string") {
+
+                    const att = d.message.attachments[0];
+                    if (!att?.url) return;
+
+                    const k = c.originalName;
+                    if (!cs[k]) cs[k] = { ch: [], lu: Date.now() };
+
+                    if (!cs[k].ch.some(x => x.index === c.index)) {
+                        cs[k].ch.push({ ...c, url: att.url });
+                        cs[k].lu = Date.now();
+                    }
+
+                    const all = cs[k]?.ch;
+                    if (all && all.length === c.total) {
+                        all.sort((a, b) => a.index - b.index);
+                        (async () => {
+                            try {
+                                const parts: Blob[] = [];
+                                for (let i = 0; i < all.length; i++) {
+                                    const r = await fetch(all[i].url);
+                                    parts.push(await r.blob());
+                                }
+                                const blob = new Blob(parts);
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement("a");
+                                a.href = url;
+                                a.download = all[0].originalName;
+                                document.body.appendChild(a);
+                                a.click();
+                                document.body.removeChild(a);
+                                URL.revokeObjectURL(url);
+                                delete cs[k];
+                            } catch (e) {
+                                console.error("[FileSplitter]", e);
+                            }
+                        })();
+                    }
+                }
+            } catch { }
+        };
+
+        FluxDispatcher.subscribe("MESSAGE_CREATE", this._onMessageCreate);
+        addChatBarButton("FileSplitter", SplitButton);
     },
 
     stop() {
-        FluxDispatcher.unsubscribe("MESSAGE_CREATE", this.onMessageCreate);
+        if (this._onMessageCreate) FluxDispatcher.unsubscribe("MESSAGE_CREATE", this._onMessageCreate);
         removeChatBarButton("FileSplitter");
-        if (this.chunkCleanupInterval) {
-            clearInterval(this.chunkCleanupInterval);
-        }
+        if (this._cleanupInterval) clearInterval(this._cleanupInterval);
     }
 });
