@@ -35,10 +35,10 @@ A Vencord/Equicord plugin that bypasses Discord's file size limit by automatical
    cd Vencord
    ```
 
-2. Create the userplugins directory and copy the plugin:
+2. Clone this plugin into the userplugins directory:
    ```bash
-   mkdir -p src/userplugins/fileSplitter
-   cp /path/to/FileSplitter.tsx src/userplugins/fileSplitter/index.tsx
+   git clone https://github.com/sioaeko/FileSplitter.git src/userplugins/fileSplitter
+   cp src/userplugins/fileSplitter/FileSplitter.tsx src/userplugins/fileSplitter/index.tsx
    ```
 
 3. Install dependencies and build:
@@ -63,10 +63,10 @@ A Vencord/Equicord plugin that bypasses Discord's file size limit by automatical
    cd Equicord
    ```
 
-2. Create the userplugins directory and copy the plugin:
+2. Clone this plugin into the userplugins directory:
    ```bash
-   mkdir -p src/userplugins/fileSplitter
-   cp /path/to/FileSplitter.tsx src/userplugins/fileSplitter/index.tsx
+   git clone https://github.com/sioaeko/FileSplitter.git src/userplugins/fileSplitter
+   cp src/userplugins/fileSplitter/FileSplitter.tsx src/userplugins/fileSplitter/index.tsx
    ```
 
 3. Install dependencies and build:
