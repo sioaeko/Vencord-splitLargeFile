@@ -1,125 +1,169 @@
 # FileSplitter - Vencord/Equicord Plugin
 
-A Vencord/Equicord plugin that bypasses Discord's file size limit by automatically splitting large files during upload and merging them back together on download.
+FileSplitter is a Vencord/Equicord plugin that works around Discord's upload limit by splitting large files into 10MB parts on upload, then rebuilding them on the receiving side inside the client.
+
+The project now supports both source-based installs and a release patcher for already-installed clients, so users who do not want to clone/build a repo can still use the full plugin.
+
+## What It Does
+
+- Adds a **Split & Upload** button to the chat bar
+- Splits files larger than 10MB into numbered chunk uploads
+- Re-detects chunk messages automatically when messages load or channels change
+- Rebuilds the original file locally when all parts are available
+- Shows a merged **download card** for non-image files
+- Shows a merged **inline preview card** for image files
+- Keeps the original filename for downloads
+- Avoids the old forced auto-download flow for rebuilt files
+- Supports installed **Equicord**, installed **Vencord**, and source repo installs
+- Includes a Windows release patcher with backup/restore/status flows
 
 ## Screenshots
 
-### Splitting in progress
-![Splitting file into chunks](screenshots/chunk-message.png)
+### Non-image merged result card
+![Merged file download card](screenshots/zip-merge-preview.png)
 
-### Upload progress
-![Upload progress percentage](screenshots/upload-progress.png)
+### Non-image merged result card on the default Discord theme
+![Merged file download card on default theme](screenshots/default-theme-zip-preview.png)
 
-### Upload complete
-![Upload complete notification](screenshots/upload-complete.png)
+### Image merged preview card
+![Merged image preview card](screenshots/image-merge-preview.png)
 
-### Uploaded chunks in channel
+### Chunk uploads in chat
 ![Uploaded chunk messages in Discord](screenshots/upload-sample.png)
 
-## Features
+### Upload progress toast
+![Upload progress percentage](screenshots/upload-progress.png)
 
-- Automatically splits files into 10MB chunks for upload
-- Auto-detects and merges chunks on the receiving end
-- Chat bar icon button for easy file selection
-- Toast notifications for upload progress
-- Supports all file types
-- Garbage collection for incomplete chunks (5-minute expiry)
+### Upload complete toast
+![Upload complete notification](screenshots/upload-complete.png)
 
-## Installation
+## Current Feature Set
 
-There are two ways to install this plugin:
+### Upload-side behavior
 
-### Method 1: Release Patcher (Recommended for most users)
+- Files at or below 10MB are left alone and can be sent normally
+- Files above 10MB are split into `part001`, `part002`, `part003`, and so on
+- Each chunk is uploaded through Discord's normal upload pipeline
+- Chunk metadata is sent as JSON message content so the receiving client can reassemble the file
+- Upload progress is shown through live toast notifications
+- The plugin currently enforces a 500MB per-file soft limit in the UI
 
-Use the packaged `FileSplitterPatcher.exe` from the GitHub Releases page.
+### Receive-side behavior
 
-Supported targets:
+- Existing messages are scanned when the plugin starts
+- Existing messages are scanned again when a channel is selected
+- Message create and message update events are listened to in real time
+- Once every chunk for a file is present, the plugin marks the set as mergeable
+- Image files get a rebuilt inline preview card
+- Non-image files get a rebuilt download card with a file icon
+- Downloads happen only when the user clicks **Download**
+- Original chunk rows are hidden once a merged result card is available
+
+### UI behavior
+
+- Image results show a large preview and a bottom action row
+- Non-image results show a file-type icon, filename, subtitle, and download button
+- Result cards are styled to remain readable on the default Discord dark theme
+- Failed rebuilds show an error state with a retry action
+
+### Patcher behavior
+
+- Can patch **Installed Equicord**
+- Can patch **Installed Vencord**
+- Can copy the plugin into a **Vencord source repo**
+- Can copy the plugin into an **Equicord source repo**
+- Creates backups for installed-client patching
+- Supports restore and status checks from CLI and GUI modes
+
+## Installation Options
+
+There are three supported ways to use FileSplitter.
+
+### Option 1: Release Patcher
+
+Recommended for most users on Windows.
+
+Release:
+https://github.com/sioaeko/Vencord-splitLargeFile/releases
+
+Download `FileSplitterPatcher.exe` and choose the mode that matches your setup.
+
+Supported release-patcher targets:
 
 - Installed Equicord
 - Installed Vencord
-- Vencord source repo
-- Equicord source repo
+- Source Repo (Vencord)
+- Source Repo (Equicord)
 
 #### Installed Equicord / Installed Vencord
 
-1. Download `FileSplitterPatcher.exe` from the latest release.
-2. Fully close Discord.
-3. Run `FileSplitterPatcher.exe`.
-4. Choose `Installed Equicord` or `Installed Vencord`.
-5. Click `Install / Update`.
-6. Restart Discord and enable `FileSplitter` in the plugin list if needed.
+1. Fully close Discord.
+2. Run `FileSplitterPatcher.exe`.
+3. Choose `Installed Equicord` or `Installed Vencord`.
+4. Click `Install / Update`.
+5. Start Discord again.
+6. Enable `FileSplitter` in the plugin list if your client requires it.
 
 #### Source Repo (Vencord / Equicord)
 
-1. Download `FileSplitterPatcher.exe` from the latest release.
-2. Run `FileSplitterPatcher.exe`.
-3. Choose `Source Repo (Vencord)` or `Source Repo (Equicord)`.
-4. Select your local repo folder.
-5. Build/inject your client again.
+1. Run `FileSplitterPatcher.exe`.
+2. Choose `Source Repo (Vencord)` or `Source Repo (Equicord)`.
+3. Select your local repo root.
+4. Build/inject your client again.
 
-### Method 2: Source Build
+### Option 2: Build From Source
 
-Build from source by placing the plugin in the `userplugins` directory.
+Use this if you already maintain a local Vencord/Equicord source checkout.
 
 #### Vencord
 
-1. Clone the [Vencord](https://github.com/Vendicated/Vencord) source:
+1. Clone the Vencord source:
    ```bash
    git clone https://github.com/Vendicated/Vencord.git
    cd Vencord
    ```
-
-2. Clone this plugin into the userplugins directory:
+2. Create the userplugin folder:
    ```bash
    mkdir -p src/userplugins/fileSplitter
-   curl -o src/userplugins/fileSplitter/index.tsx https://raw.githubusercontent.com/sioaeko/Vencord-splitLargeFile/main/FileSplitter.tsx
    ```
-
-3. Install dependencies and build:
+3. Copy the plugin files:
+   ```bash
+   curl -o src/userplugins/fileSplitter/index.tsx https://raw.githubusercontent.com/sioaeko/Vencord-splitLargeFile/main/FileSplitter.tsx
+   curl -o src/userplugins/fileSplitter/native.ts https://raw.githubusercontent.com/sioaeko/Vencord-splitLargeFile/main/native.ts
+   ```
+4. Build and inject:
    ```bash
    pnpm install
    pnpm build
-   ```
-
-4. Inject into Discord:
-   ```bash
    pnpm inject
    ```
 
-5. Restart Discord, then go to **Settings → Vencord → Plugins**, search for `FileSplitter`, and enable it.
-
 #### Equicord
 
-1. Clone the [Equicord](https://github.com/Equicord/Equicord) source:
+1. Clone the Equicord source:
    ```bash
    git clone https://github.com/Equicord/Equicord.git
    cd Equicord
    ```
-
-2. Clone this plugin into the userplugins directory:
+2. Create the userplugin folder:
    ```bash
    mkdir -p src/userplugins/fileSplitter
-   curl -o src/userplugins/fileSplitter/index.tsx https://raw.githubusercontent.com/sioaeko/Vencord-splitLargeFile/main/FileSplitter.tsx
    ```
-
-3. Install dependencies and build:
+3. Copy the plugin files:
+   ```bash
+   curl -o src/userplugins/fileSplitter/index.tsx https://raw.githubusercontent.com/sioaeko/Vencord-splitLargeFile/main/FileSplitter.tsx
+   curl -o src/userplugins/fileSplitter/native.ts https://raw.githubusercontent.com/sioaeko/Vencord-splitLargeFile/main/native.ts
+   ```
+4. Build and inject:
    ```bash
    pnpm install
    pnpm build
-   ```
-
-4. Inject into Discord:
-   ```bash
    pnpm inject
    ```
 
-5. Restart Discord, then go to **Settings → Equicord → Plugins**, search for `FileSplitter`, and enable it.
+### Option 3: Run the CLI Patcher From This Repo
 
-> **Note**: The `src/userplugins/` directory is in `.gitignore` and must be created manually.
-
-### Method 3: CLI Patcher
-
-You can also run the patcher directly from this repository:
+If you want to work directly from the repository:
 
 ```bash
 npm install
@@ -130,114 +174,112 @@ Examples:
 
 ```bash
 node patcher.js --install
+node patcher.js --restore
+node patcher.js --status
 node patcher.js --install-vencord
+node patcher.js --restore-vencord
+node patcher.js --status-vencord
 node patcher.js --install-source --repo C:\path\to\Vencord
 ```
 
-## Usage
+## How It Works In Practice
 
-### Sending Files
+### Sending files
 
-1. Click the **file split icon** (document icon) in the chat bar.
-2. Select a file larger than 10MB.
-3. The file is automatically split into 10MB chunks and uploaded.
-4. Progress is shown via toast notifications.
+1. Click the FileSplitter button in the chat bar.
+2. Pick a file larger than 10MB.
+3. The plugin splits it into numbered chunk uploads.
+4. Each chunk is uploaded like a normal Discord attachment.
+5. A small metadata message is posted for each chunk set.
 
-### Receiving Files - With Plugin
+### Receiving files with FileSplitter installed
 
-If you have the plugin installed and enabled, everything is **automatic**:
-1. Chunk messages are detected as they arrive in the channel.
-2. Once all chunks are received, they are merged automatically.
-3. Images show an inline preview card.
-4. Other file types show a download card.
-5. The original file is downloaded with its original filename when you click **Download**.
+1. The client finds chunk metadata messages.
+2. It tracks all parts for the same original file.
+3. After every part is available, it fetches those attachments locally.
+4. It rebuilds the original file in memory.
+5. It renders either:
+   - an inline image preview card, or
+   - a non-image file download card.
 
-### Receiving Files - Without Plugin
+### Receiving files without FileSplitter
 
-If you don't have the plugin, you can manually merge the part files:
-
-1. Download all `.part001`, `.part002`, `.part003`, ... files from the channel.
-2. Save all parts to the **same folder**.
+The files are still usable manually. You can download the `.part001`, `.part002`, `.part003`, and later pieces, then join them yourself in order.
 
 #### Windows (CMD)
+
 ```cmd
 copy /b "filename.part001" + "filename.part002" + "filename.part003" "originalfile"
 ```
 
 #### Windows (PowerShell)
+
 ```powershell
 Get-Content "filename.part001","filename.part002","filename.part003" -Encoding Byte -ReadCount 0 | Set-Content "originalfile" -Encoding Byte
 ```
 
 #### Linux / macOS
+
 ```bash
 cat filename.part001 filename.part002 filename.part003 > originalfile
 ```
 
-#### Python (for many parts)
-```python
-import glob
+## Supported Targets
 
-filename = "originalfile"
-parts = sorted(glob.glob(f"{filename}.part*"))
-
-with open(filename, "wb") as out:
-    for part in parts:
-        with open(part, "rb") as f:
-            out.write(f.read())
-
-print(f"Merged {len(parts)} parts into {filename}")
-```
-
-> **Important**: Parts must be merged in order. `.part001` → `.part002` → `.part003` ...
+| Target | Supported | Notes |
+|------|------|------|
+| Installed Equicord | Yes | Supported by the release patcher |
+| Installed Vencord | Yes | Supported by the release patcher |
+| Vencord source repo | Yes | Supported by the release patcher and manual install |
+| Equicord source repo | Yes | Supported by the release patcher and manual install |
+| Plain Discord without Vencord/Equicord | No | The patcher does not install a mod client by itself |
 
 ## Technical Details
 
 | Item | Description |
 |------|-------------|
-| Chunk Size | 10MB (compatible with Discord free tier) |
-| Max File Size | 500MB |
-| File Formats | All formats supported |
-| Metadata | JSON (sent as message content) |
-| Upload Method | Discord CloudUploader + RestAPI |
-| Chunk Expiry | 30 minutes (receiver-side garbage collection) |
+| Chunk Size | 10MB |
+| Max UI-enforced file size | 500MB |
+| File Formats | All file types |
+| Image Preview Types | Common inline image formats |
+| Metadata Transport | JSON in message content |
+| Upload Path | Discord upload pipeline through CloudUploader + RestAPI |
+| Rebuild Path | Local fetch + Blob reconstruction |
+| Chunk Expiry | 30 minutes |
 | Part Naming | `filename.part001`, `filename.part002`, ... |
 
 ## Troubleshooting
 
-**Q: Plugin doesn't show up in the Plugins list**
-A: Run `pnpm build` and `pnpm inject` again, then fully restart Discord. If using the release patcher, re-run `FileSplitterPatcher.exe` and apply the correct mode again.
+**Q: I cannot build the plugin from source**
+A: Use the release patcher instead. `FileSplitterPatcher.exe` is intended specifically for users who do not want to deal with source builds or repo layout changes.
 
-**Q: Upload Failed 40005 error**
-A: The file chunk exceeds Discord's upload limit. Try reducing the `CHUNK_SIZE` value in the plugin code (default: 10MB).
-
-**Q: Auto-merge isn't working on the receiving end**
-A: All chunks must be received in the same channel. Make sure the plugin is enabled.
-
-**Q: Upload failed midway**
-A: Check your internet connection and try again. Already-sent parts remain in the channel, so you can manually send the remaining parts.
+**Q: The plugin does not show up after patching**
+A: Fully close Discord, patch the correct target, then restart Discord. If you are using a source repo, rebuild/inject again after copying the plugin.
 
 **Q: Installed patching failed**
-A: Make sure you're choosing the correct target (`Installed Equicord` vs `Installed Vencord`) and that Discord is fully closed before patching.
+A: Make sure you selected the correct installed target: `Installed Equicord` and `Installed Vencord` are separate modes.
+
+**Q: Auto-merge is not happening**
+A: All chunks must be available in the same channel, and the receiving client must have FileSplitter installed and active.
+
+**Q: Why does a user without the plugin not see the rebuilt preview card?**
+A: The rebuilt result card is local client-side UI. Users without the plugin only see the uploaded chunk files and can still merge them manually.
+
+**Q: Can this patch plain Discord directly?**
+A: No. The patcher targets Vencord/Equicord installs or source repos. It does not install a custom client on top of plain Discord by itself.
 
 ## Security
 
-- All file processing is done locally on your device
-- No external servers are used
-- Files are transferred through Discord's CDN
-
-## License
-
-MIT License
+- File reconstruction is done locally on the receiving client
+- No external merge server is used
+- Files are transferred only through Discord's own attachment/CDN flow
+- Installed patching creates a local backup before modifying client files
 
 ## Credits
 
 - Author: [sioaeko](https://github.com/sioaeko)
 - Original concept: [ImTheSquid/SplitLargeFiles](https://github.com/ImTheSquid/SplitLargeFiles)
 
-## Requirements
+## License
 
-- Vencord or Equicord
-- Discord Desktop Client
-- Node.js 18+
-- pnpm (source build) or npm (CLI patcher)
+MIT License
