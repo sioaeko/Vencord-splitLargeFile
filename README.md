@@ -29,7 +29,35 @@ A Vencord/Equicord plugin that bypasses Discord's file size limit by automatical
 
 There are two ways to install this plugin:
 
-### Method 1: Source Build (Recommended)
+### Method 1: Release Patcher (Recommended for most users)
+
+Use the packaged `FileSplitterPatcher.exe` from the GitHub Releases page.
+
+Supported targets:
+
+- Installed Equicord
+- Installed Vencord
+- Vencord source repo
+- Equicord source repo
+
+#### Installed Equicord / Installed Vencord
+
+1. Download `FileSplitterPatcher.exe` from the latest release.
+2. Fully close Discord.
+3. Run `FileSplitterPatcher.exe`.
+4. Choose `Installed Equicord` or `Installed Vencord`.
+5. Click `Install / Update`.
+6. Restart Discord and enable `FileSplitter` in the plugin list if needed.
+
+#### Source Repo (Vencord / Equicord)
+
+1. Download `FileSplitterPatcher.exe` from the latest release.
+2. Run `FileSplitterPatcher.exe`.
+3. Choose `Source Repo (Vencord)` or `Source Repo (Equicord)`.
+4. Select your local repo folder.
+5. Build/inject your client again.
+
+### Method 2: Source Build
 
 Build from source by placing the plugin in the `userplugins` directory.
 
@@ -89,39 +117,22 @@ Build from source by placing the plugin in the `userplugins` directory.
 
 > **Note**: The `src/userplugins/` directory is in `.gitignore` and must be created manually.
 
-### Method 2: ASAR Direct Injection (Equicord only)
+### Method 3: CLI Patcher
 
-Directly inject the plugin into the already-installed Equicord ASAR bundle. No source build required.
+You can also run the patcher directly from this repository:
 
-> **Prerequisites**: Equicord must already be installed, and `@electron/asar` must be available.
+```bash
+npm install
+node patcher.js --help
+```
 
-1. **Back up your current ASAR** (if not already backed up):
-   ```bash
-   copy "%APPDATA%\Equicord\equicord.asar" "%APPDATA%\Equicord\equicord.asar.bak"
-   ```
+Examples:
 
-2. Clone this repository:
-   ```bash
-   git clone https://github.com/sioaeko/Vencord-splitLargeFile.git
-   cd FileSplitter
-   ```
-
-3. Install the required dependency:
-   ```bash
-   npm install @electron/asar
-   ```
-
-4. Run the injection script:
-   ```bash
-   node inject_full.js
-   ```
-
-5. Restart Discord. The plugin will appear under **Plugins** as `FileSplitter`.
-
-> **Note**: The injection script automatically extracts the ASAR backup, patches `renderer.js` with the plugin code, and writes it back. If something goes wrong, restore with:
-> ```bash
-> copy "%APPDATA%\Equicord\equicord.asar.bak" "%APPDATA%\Equicord\equicord.asar"
-> ```
+```bash
+node patcher.js --install
+node patcher.js --install-vencord
+node patcher.js --install-source --repo C:\path\to\Vencord
+```
 
 ## Usage
 
@@ -137,7 +148,9 @@ Directly inject the plugin into the already-installed Equicord ASAR bundle. No s
 If you have the plugin installed and enabled, everything is **automatic**:
 1. Chunk messages are detected as they arrive in the channel.
 2. Once all chunks are received, they are merged automatically.
-3. The original file is downloaded with its original filename.
+3. Images show an inline preview card.
+4. Other file types show a download card.
+5. The original file is downloaded with its original filename when you click **Download**.
 
 ### Receiving Files - Without Plugin
 
@@ -187,13 +200,13 @@ print(f"Merged {len(parts)} parts into {filename}")
 | File Formats | All formats supported |
 | Metadata | JSON (sent as message content) |
 | Upload Method | Discord CloudUploader + RestAPI |
-| Chunk Expiry | 5 minutes (receiver-side garbage collection) |
+| Chunk Expiry | 30 minutes (receiver-side garbage collection) |
 | Part Naming | `filename.part001`, `filename.part002`, ... |
 
 ## Troubleshooting
 
 **Q: Plugin doesn't show up in the Plugins list**
-A: Run `pnpm build` and `pnpm inject` again, then fully restart Discord. If using Method 2, make sure `equicord.asar.bak` exists and re-run `node inject_full.js`.
+A: Run `pnpm build` and `pnpm inject` again, then fully restart Discord. If using the release patcher, re-run `FileSplitterPatcher.exe` and apply the correct mode again.
 
 **Q: Upload Failed 40005 error**
 A: The file chunk exceeds Discord's upload limit. Try reducing the `CHUNK_SIZE` value in the plugin code (default: 10MB).
@@ -204,8 +217,8 @@ A: All chunks must be received in the same channel. Make sure the plugin is enab
 **Q: Upload failed midway**
 A: Check your internet connection and try again. Already-sent parts remain in the channel, so you can manually send the remaining parts.
 
-**Q: "X is Not a constructor" error**
-A: This can happen if the webpack module resolution fails. Try using Method 2 (ASAR injection) instead.
+**Q: Installed patching failed**
+A: Make sure you're choosing the correct target (`Installed Equicord` vs `Installed Vencord`) and that Discord is fully closed before patching.
 
 ## Security
 
@@ -224,7 +237,7 @@ MIT License
 
 ## Requirements
 
-- Vencord or Equicord (source build required for Method 1)
+- Vencord or Equicord
 - Discord Desktop Client
 - Node.js 18+
-- pnpm (Method 1) or npm (Method 2)
+- pnpm (source build) or npm (CLI patcher)
