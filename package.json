@@ -1,0 +1,31 @@
+{
+  "name": "filesplitter-patcher",
+  "version": "0.1.0",
+  "private": true,
+  "main": "patcher.js",
+  "bin": "patcher.js",
+  "scripts": {
+    "patch": "node patcher.js --install",
+    "restore": "node patcher.js --restore",
+    "status": "node patcher.js --status",
+    "build:exe": "pkg . --target node18-win-x64 --output dist/FileSplitterPatcher.exe",
+    "build:mac-x64": "pkg . --target node18-macos-x64 --output dist/FileSplitterPatcher-macos-x64",
+    "build:mac-arm64": "pkg . --target node18-macos-arm64 --output dist/FileSplitterPatcher-macos-arm64"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "pkg": "^5.8.1"
+  },
+  "pkg": {
+    "scripts": [
+      "patcher.js"
+    ],
+    "assets": [
+      "FileSplitter.tsx",
+      "native.ts",
+      "injected-plugin.template.js",
+      "patcher-gui.ps1",
+      "patcher-gui.applescript"
+    ]
+  }
+}
