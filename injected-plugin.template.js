@@ -9,16 +9,9 @@ var CHUNK_SIZE=10*1024*1024;
 var CHUNK_TIMEOUT=30*60*1000;
 var cs={};
 var mergedResults=new Map();
+var processedMessageIds=new Set();
+var lastRenderedVersion=new Map();
 function downloadBlob(blob,filename){
-if(IS_DISCORD_DESKTOP&&DiscordNative&&DiscordNative.fileManager&&DiscordNative.fileManager.saveWithDialog){
-return blob.arrayBuffer().then(function(buffer){
-return DiscordNative.fileManager.saveWithDialog(new Uint8Array(buffer),filename);
-}).catch(function(){
-var url=URL.createObjectURL(blob);
-window.open(url);
-setTimeout(function(){URL.revokeObjectURL(url);},60000);
-});
-}
 var url=URL.createObjectURL(blob);
 var a=document.createElement("a");
 a.href=url;
@@ -26,7 +19,7 @@ a.download=filename;
 document.body.appendChild(a);
 a.click();
 document.body.removeChild(a);
-URL.revokeObjectURL(url);
+setTimeout(function(){URL.revokeObjectURL(url);},60000);
 return Promise.resolve();
 }
 function getChunkKey(c){return c.originalName+"_"+c.timestamp;}
@@ -40,13 +33,13 @@ return parsed.toString();
 return String(url).replace("://media.discordapp.net/","://cdn.discordapp.com/");
 }}
 function getAttachmentUrl(attachment){
-return normalizeAttachmentUrl(attachment&&(
+return (attachment&&(
 attachment.url||
 attachment.proxy_url||
 attachment.download_url||
 attachment.proxyUrl||
 null
-));
+))||null;
 }
 function parseChunkMeta(content){
 try{
@@ -242,7 +235,7 @@ Array.from(messageEl.querySelectorAll("a[href]")).forEach(function(link){
 if(!(link instanceof HTMLAnchorElement))return;
 var href=normalizeAttachmentUrl(link.href);
 href=href&&href.split("?")[0];
-if(href!==attachmentHref)continue;
+if(href!==attachmentHref)return;
 var target=link.closest("[class*='attachment'], [class*='file'], [class*='container'], a[href]");
 if(target instanceof HTMLElement&&target!==mount&&!mount.contains(target))markHidden(target);
 });
@@ -352,18 +345,24 @@ body.appendChild(actions);
 wrapper.appendChild(body);
 return wrapper;
 }
-function renderMergedResult(key){
+function renderMergedResult(key,force){
 var result=mergedResults.get(key);
 var anchorChunk=getAnchorChunk(key);
 if(!result||!anchorChunk||!anchorChunk.channelId||!anchorChunk.messageId)return;
+var version=result.status+"|"+(result.objectUrl||"")+(result.error||"");
+if(!force&&lastRenderedVersion.get(key)===version){
+var existing=document.querySelector("[data-filesplitter-preview='"+key+"']");
+if(existing)return;
+}
 var messageEl=getMessageElement(anchorChunk.channelId,anchorChunk.messageId,anchorChunk.url);
 if(!messageEl)return;
 var mount=getResultMount(messageEl);
 if(!mount)return;
 hideChunkMessages(key);
-var existing=document.querySelector("[data-filesplitter-preview='"+key+"']");
-if(existing)existing.remove();
+var existingCard=document.querySelector("[data-filesplitter-preview='"+key+"']");
+if(existingCard)existingCard.remove();
 mount.replaceChildren(createResultCardNode(result));
+lastRenderedVersion.set(key,version);
 }
 function renderAllMergedResults(){
 mergedResults.forEach(function(_,key){renderMergedResult(key);});
@@ -381,16 +380,16 @@ mergedResults.forEach(function(result){
 if(result.objectUrl)URL.revokeObjectURL(result.objectUrl);
 });
 mergedResults.clear();
+lastRenderedVersion.clear();
 }
 async function fetchBlob(url){
-var normalizedUrl=normalizeAttachmentUrl(url)||url;
-try{
-var r=await fetch(normalizedUrl);
-if(r.ok)return await r.blob();
-}catch(e){
-console.warn("[FileSplitter] fetch failed:",e);
+if(typeof VencordNative!=="undefined"&&VencordNative.fileSplitter&&typeof VencordNative.fileSplitter.fetchBlob==="function"){
+var buf=await VencordNative.fileSplitter.fetchBlob(url);
+return new Blob([buf]);
 }
-throw new Error("Failed to fetch chunk: "+String(normalizedUrl).slice(0,80));
+var r=await fetch(url);
+if(!r.ok)throw new Error("HTTP "+r.status);
+return await r.blob();
 }
 async function assembleBlob(key){
 var entry=cs[key];
@@ -487,10 +486,12 @@ void tryMergeChunks(stored.key);
 }
 function processMessage(message){
 if(!message||!message.content||!message.attachments||!message.attachments.length)return false;
+if(message.id&&processedMessageIds.has(message.id))return true;
 var c=parseChunkMeta(message.content);
 if(!c)return false;
 var attachmentUrl=getAttachmentUrl(message.attachments[0]);
 if(!attachmentUrl)return false;
+if(message.id)processedMessageIds.add(message.id);
 processChunk(Object.assign({},c,{channelId:message.channel_id,messageId:message.id}),attachmentUrl);
 return true;
 }
@@ -587,19 +588,25 @@ if(now-cs[k].lu>CHUNK_TIMEOUT)delete cs[k];
 });
 },60000);
 self._onMessageCreate=function(d){try{processMessage(d.message);}catch(e){console.error("[FileSplitter] Handler error:",e);}};
-self._onMessageUpdate=function(d){try{processMessage(d.message);}catch(e){console.error("[FileSplitter] Update handler error:",e);}};
-self._onLoadMessagesSuccess=function(d){if(d&&d.channelId){scanExistingMessages(d.channelId);renderAllMergedResults();}};
-self._onChannelSelect=function(d){if(d&&d.channelId){scanExistingMessages(d.channelId);renderAllMergedResults();clearTimeout(self._delayedChannelScan);self._delayedChannelScan=setTimeout(function(){scanExistingMessages(d.channelId);renderAllMergedResults();},1500);}};
+self._onMessageUpdate=function(d){try{if(d.message&&d.message.id)processedMessageIds.delete(d.message.id);processMessage(d.message);}catch(e){console.error("[FileSplitter] Update handler error:",e);}};
+var pendingRender=null;
+function scheduleRender(){
+if(pendingRender)return;
+pendingRender=requestAnimationFrame(function(){pendingRender=null;renderAllMergedResults();});
+}
+self._onLoadMessagesSuccess=function(d){if(d&&d.channelId){scanExistingMessages(d.channelId);scheduleRender();}};
+self._onChannelSelect=function(d){if(d&&d.channelId){scanExistingMessages(d.channelId);scheduleRender();clearTimeout(self._delayedChannelScan);self._delayedChannelScan=setTimeout(function(){scanExistingMessages(d.channelId);scheduleRender();},1500);}};
 C.FluxDispatcher.subscribe("MESSAGE_CREATE",self._onMessageCreate);
 C.FluxDispatcher.subscribe("MESSAGE_UPDATE",self._onMessageUpdate);
 C.FluxDispatcher.subscribe("LOAD_MESSAGES_SUCCESS",self._onLoadMessagesSuccess);
 C.FluxDispatcher.subscribe("CHANNEL_SELECT",self._onChannelSelect);
 __ADD_CBB__("FileSplitter",SplitButton,SplitIcon);
+self._clearMergedResults=clearMergedResults;
 var currentChannel=C.SelectedChannelStore.getChannelId();
 if(currentChannel){
 scanExistingMessages(currentChannel);
-renderAllMergedResults();
-self._delayedChannelScan=setTimeout(function(){scanExistingMessages(currentChannel);renderAllMergedResults();},1500);
+scheduleRender();
+self._delayedChannelScan=setTimeout(function(){scanExistingMessages(currentChannel);scheduleRender();},1500);
 }
 },
 stop(){
@@ -611,6 +618,7 @@ if(this._onChannelSelect)C.FluxDispatcher.unsubscribe("CHANNEL_SELECT",this._onC
 __REMOVE_CBB__("FileSplitter");
 if(this._cleanupInterval)clearInterval(this._cleanupInterval);
 if(this._delayedChannelScan)clearTimeout(this._delayedChannelScan);
-clearMergedResults();
+if(this._clearMergedResults)this._clearMergedResults();
+processedMessageIds.clear();
 }
 });

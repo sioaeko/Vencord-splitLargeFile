@@ -6,6 +6,8 @@ const { execFileSync, spawn } = require("child_process");
 const PLUGIN_MARKER = 'name:"FileSplitter"';
 const VENCORD_PATCH_START = "/* FILESPLITTER_VENCORD_PATCH_START */";
 const VENCORD_PATCH_END = "/* FILESPLITTER_VENCORD_PATCH_END */";
+const EQUICORD_PATCH_START = "/* FILESPLITTER_EQUICORD_PATCH_START */";
+const EQUICORD_PATCH_END = "/* FILESPLITTER_EQUICORD_PATCH_END */";
 const ROOT_DIR = __dirname;
 const PLATFORM = process.platform;
 
@@ -208,6 +210,53 @@ function extractArchiveSync(archivePath, destination) {
     }
 }
 
+function repackArchiveSync(sourceDir, outputPath) {
+    const header = { files: {} };
+    const fileEntries = [];
+    let dataSize = 0;
+
+    function scan(dirPath, node) {
+        const names = fs.readdirSync(dirPath).sort();
+        for (const name of names) {
+            const fullPath = path.join(dirPath, name);
+            const stat = fs.lstatSync(fullPath);
+            if (stat.isDirectory()) {
+                node.files[name] = { files: {} };
+                scan(fullPath, node.files[name]);
+            } else {
+                node.files[name] = { size: stat.size, offset: String(dataSize) };
+                fileEntries.push(fullPath);
+                dataSize += stat.size;
+            }
+        }
+    }
+
+    scan(sourceDir, header);
+
+    const headerJson = JSON.stringify(header);
+    const headerBuf = Buffer.from(headerJson, "utf8");
+    const headerPayloadSize = 4 + alignTo4(headerBuf.length);
+    const headerPickle = Buffer.alloc(4 + headerPayloadSize);
+    headerPickle.writeUInt32LE(headerPayloadSize, 0);
+    headerPickle.writeInt32LE(headerBuf.length, 4);
+    headerBuf.copy(headerPickle, 8);
+
+    const sizePickle = Buffer.alloc(8);
+    sizePickle.writeUInt32LE(4, 0);
+    sizePickle.writeUInt32LE(headerPickle.length, 4);
+
+    const fd = fs.openSync(outputPath, "w");
+    try {
+        fs.writeSync(fd, sizePickle);
+        fs.writeSync(fd, headerPickle);
+        for (const filePath of fileEntries) {
+            fs.writeSync(fd, fs.readFileSync(filePath));
+        }
+    } finally {
+        fs.closeSync(fd);
+    }
+}
+
 function resetExtractedFolder(paths) {
     extractArchiveSync(paths.asarBak, paths.equicordFolder);
 }
@@ -232,7 +281,11 @@ function getVencordPaths(options = {}) {
         vencordRoot,
         distFolder,
         rendererPath: path.join(distFolder, "renderer.js"),
-        rendererBak: path.join(distFolder, "renderer.js.filesplitter.bak")
+        rendererBak: path.join(distFolder, "renderer.js.filesplitter.bak"),
+        patcherPath: path.join(distFolder, "patcher.js"),
+        patcherBak: path.join(distFolder, "patcher.js.filesplitter.bak"),
+        preloadPath: path.join(distFolder, "preload.js"),
+        preloadBak: path.join(distFolder, "preload.js.filesplitter.bak")
     };
 }
 
@@ -246,8 +299,12 @@ function analyzeRenderer(code) {
     const piMatch = code.match(/\},(\w+)=\{\[\w+\.name\]:\{folderName:/);
     const cbbMatch = code.match(/(\w+)=\((\w+),(\w+),(\w+)\)=>(\w+)\.set\(\2,\{render:\3,icon:\4\}\)/);
 
-    if (!dpMatch || !rtMatch || !piMatch || !cbbMatch) {
-        throw new Error("Failed to analyze renderer.js. Equicord build layout may have changed.");
+    if (!dpMatch || !rtMatch || !cbbMatch) {
+        const missing = [];
+        if (!dpMatch) missing.push("BadgeAPI/definePlugin");
+        if (!rtMatch) missing.push("plugin registry");
+        if (!cbbMatch) missing.push("ChatBarButton");
+        throw new Error("Failed to analyze renderer.js (missing: " + missing.join(", ") + "). Equicord build layout may have changed.");
     }
 
     const addCBB = cbbMatch[1];
@@ -267,7 +324,7 @@ function analyzeRenderer(code) {
         dpFn: dpMatch[1],
         rtVar: rtMatch[1],
         rtIdx: rtMatch.index,
-        piVar: piMatch[1],
+        piVar: piMatch?.[1] ?? null,
         addCBB,
         rmCBB: cbbAreaMatch[1],
         chatBarBtn: cbbAreaMatch[2],
@@ -299,17 +356,47 @@ function injectPlugin(paths) {
     const insertPos = newRtStart + meta.rtVar.length + 2;
     updated = updated.substring(0, insertPos) + `[_FS_.name]:_FS_,` + updated.substring(insertPos);
 
-    const piSearch = meta.piVar + "={";
-    const newPiStart = updated.indexOf(piSearch, meta.rtIdx);
-    const piInsertPos = newPiStart + piSearch.length;
-    updated = updated.substring(0, piInsertPos) + `[_FS_.name]:{folderName:"src/userplugins/fileSplitter",userPlugin:true},` + updated.substring(piInsertPos);
+    if (meta.piVar) {
+        const piSearch = meta.piVar + "={";
+        const newPiStart = updated.indexOf(piSearch, meta.rtIdx);
+        if (newPiStart !== -1) {
+            const piInsertPos = newPiStart + piSearch.length;
+            updated = updated.substring(0, piInsertPos) + `[_FS_.name]:{folderName:"src/userplugins/fileSplitter",userPlugin:true},` + updated.substring(piInsertPos);
+        }
+    }
 
     fs.writeFileSync(paths.rendererPath, updated);
 }
 
+function tryAnalyzeRenderer(code) {
+    try {
+        return analyzeRenderer(code);
+    } catch {
+        return null;
+    }
+}
+
+function removeInjectedPluginBlocks(code) {
+    let updated = code;
+
+    while (true) {
+        const meta = tryAnalyzeRenderer(updated);
+        if (!meta) break;
+
+        const pluginStart = updated.lastIndexOf("var _FS_=", meta.rtIdx);
+        if (pluginStart === -1) break;
+
+        const injectedBlock = updated.slice(pluginStart, meta.rtIdx);
+        if (!injectedBlock.includes(PLUGIN_MARKER)) break;
+
+        updated = updated.slice(0, pluginStart) + updated.slice(meta.rtIdx);
+    }
+
+    return updated;
+}
+
 function removeExistingPlugin(code) {
-    return code
-        .replace(/var _FS_=\w+\(\{name:"FileSplitter"[\s\S]*?\}\);\s*/m, "")
+    return removeInjectedPluginBlocks(code)
         .replace(/\[_FS_\.name\]:_FS_,/g, "")
         .replace(/\[_FS_\.name\]:\{folderName:"src\/userplugins\/fileSplitter",userPlugin:true\},/g, "");
 }
@@ -326,12 +413,42 @@ function removeInstalledVencordPatch(code) {
         .trimEnd() + "\n";
 }
 
+function removeInstalledEquicordPatch(code) {
+    const start = code.indexOf(EQUICORD_PATCH_START);
+    if (start === -1) return code;
+
+    const end = code.indexOf(EQUICORD_PATCH_END, start);
+    if (end === -1) return code.slice(0, start).trimEnd() + "\n";
+
+    return (code.slice(0, start) + code.slice(end + EQUICORD_PATCH_END.length))
+        .replace(/\n{3,}/g, "\n\n")
+        .trimEnd() + "\n";
+}
+
 function buildInstalledVencordPluginDef() {
+    const buildC = [
+        "var WP=Vencord.Webpack;",
+        "var _fbp=WP.findByProps.bind(WP);",
+        "var _C=WP.Common||{};",
+        "var C={",
+        "React:_C.React||_fbp('createElement','useState'),",
+        "FluxDispatcher:_C.FluxDispatcher||_fbp('subscribe','dispatch'),",
+        "MessageStore:_C.MessageStore||_fbp('getMessages','getMessage'),",
+        "RestAPI:_C.RestAPI||_fbp('getAPIBaseURL','get'),",
+        "Constants:_C.Constants||_fbp('Endpoints','UserFlags'),",
+        "SelectedChannelStore:_C.SelectedChannelStore||_fbp('getChannelId','getVoiceChannelId'),",
+        "SnowflakeUtils:_C.SnowflakeUtils||_fbp('fromTimestamp','extractTimestamp'),",
+        "Toasts:(function(){var t=_C.Toasts;if(t&&t.show)return t;var m=_fbp('showToast','createToast');if(!m)return{show:function(){},genId:function(){return Date.now().toString();},Type:{MESSAGE:0,SUCCESS:1,FAILURE:2}};return{show:function(d){try{m.showToast(m.createToast(d.message,d.type));}catch(e){}},genId:function(){return Date.now().toString();},Type:{MESSAGE:0,SUCCESS:1,FAILURE:2}};}()),",
+        "CloudUploader:_C.CloudUploader||WP.find(function(m){return m.prototype&&m.prototype.trackUploadFinished;})",
+        "};"
+    ].join("");
+
     const transformed = readAssetText("injected-plugin.template.js")
         .replace(/^var _FS_=__DP_FN__\(\{/m, "var _FS_={")
         .replace(/__CHAT_BAR_BUTTON__/g, "Vencord.Api.ChatButtons.ChatBarButton")
         .replace(/__ADD_CBB__/g, "Vencord.Api.ChatButtons.addChatBarButton")
         .replace(/__REMOVE_CBB__/g, "Vencord.Api.ChatButtons.removeChatBarButton")
+        .replace(/var C=Vencord\.Webpack\.Common;/g, buildC)
         .replace(/\}\);\s*$/, "};");
 
     if (/__\w+__/.test(transformed)) {
@@ -347,30 +464,71 @@ function buildInstalledVencordBootstrap() {
         "",
         VENCORD_PATCH_START,
         "(function(){",
+        "if(globalThis.__FILESPLITTER_VENCORD_FALLBACK__) return;",
+        "globalThis.__FILESPLITTER_VENCORD_FALLBACK__=true;",
         pluginDef,
+        "function ensureSettings(){",
         "try{",
-        "if(typeof Vencord==='undefined'||!Vencord||!Vencord.Plugins||!Vencord.Plugins.plugins||!Vencord.Api||!Vencord.Api.PluginManager){",
-        "console.warn('[FileSplitter] Installed Vencord bootstrap: Vencord runtime not available.');",
-        "return;",
+        "if(typeof Vencord==='undefined'||!Vencord)return;",
+        "if(Vencord.PlainSettings){",
+        "var p=Vencord.PlainSettings;",
+        "try{p.plugins??={};}catch(e){}",
+        "try{p.plugins.FileSplitter??={};p.plugins.FileSplitter.enabled=true;}catch(e){}",
+        "try{p.plugins.ChatInputButtonAPI??={};p.plugins.ChatInputButtonAPI.enabled=true;}catch(e){}",
         "}",
+        "if(Vencord.Settings){",
+        "try{Vencord.Settings.plugins.FileSplitter??={};Vencord.Settings.plugins.FileSplitter.enabled=true;}catch(e){}",
+        "try{Vencord.Settings.plugins.ChatInputButtonAPI??={};Vencord.Settings.plugins.ChatInputButtonAPI.enabled=true;}catch(e){}",
+        "}",
+        "}catch(e){}",
+        "}",
+        "function tryStart(){",
+        "try{",
+        "if(typeof Vencord==='undefined'||!Vencord||!Vencord.Plugins||!Vencord.Plugins.plugins){return false;}",
+        "var WP=Vencord.Webpack;",
+        "if(!WP||typeof WP.findByProps!=='function'){return false;}",
+        "var React=WP.findByProps('createElement','useState');",
+        "if(!React||typeof React.createElement!=='function'){console.log('[FileSplitter] Waiting for React...');return false;}",
+        "var CB=Vencord.Api&&Vencord.Api.ChatButtons;",
+        "if(!CB||typeof CB.addChatBarButton!=='function'){console.log('[FileSplitter] Waiting for ChatButtons API...');return false;}",
         "var plugins=Vencord.Plugins.plugins;",
-        "var manager=Vencord.Api.PluginManager;",
+        "if(_FS_.started){return true;}",
+        "console.log('[FileSplitter] Vencord bootstrap starting...');",
+        "ensureSettings();",
         "var existing=plugins.FileSplitter;",
-        "if(existing&&existing!==_FS_&&existing.started&&typeof manager.stopPlugin==='function'){",
-        "try{manager.stopPlugin(existing);}catch(error){console.warn('[FileSplitter] Failed to stop previous Vencord FileSplitter plugin:',error);}",
+        "if(existing&&existing!==_FS_){",
+        "try{",
+        "if(existing.started){",
+        "var stopFn=Vencord.Plugins.stopPlugin||(Vencord.Api&&Vencord.Api.PluginManager&&Vencord.Api.PluginManager.stopPlugin);",
+        "if(typeof stopFn==='function'){try{stopFn(existing);}catch(e){}}",
+        "else if(typeof existing.stop==='function'){try{existing.stop();}catch(e){}}",
         "}",
+        "existing.started=false;",
+        "}catch(e){console.warn('[FileSplitter] stop existing:',e);}",
+        "}",
+        "_FS_.enabledByDefault=true;",
+        "_FS_.dependencies=['ChatInputButtonAPI'];",
         "plugins.FileSplitter=_FS_;",
-        "if(_FS_.started&&typeof manager.stopPlugin==='function'){",
-        "try{manager.stopPlugin(_FS_);}catch(error){console.warn('[FileSplitter] Failed to reset FileSplitter plugin before start:',error);}",
+        "var manager=Vencord.Plugins;",
+        "if(manager&&manager.plugins&&manager.plugins!==plugins){manager.plugins.FileSplitter=_FS_;}",
+        "if(manager&&typeof manager.startDependenciesRecursive==='function'){",
+        "try{manager.startDependenciesRecursive(_FS_);}catch(e){console.warn('[FileSplitter] deps:',e);}",
         "}",
-        "if(typeof manager.startPlugin==='function'){",
-        "manager.startPlugin(_FS_);",
-        "}else if(typeof _FS_.start==='function'){",
-        "_FS_.start();",
-        "_FS_.started=true;",
+        "if(manager&&typeof manager.startPlugin==='function'){",
+        "try{var ok=manager.startPlugin(_FS_);console.log('[FileSplitter] startPlugin result:',ok);}catch(e){console.error('[FileSplitter] startPlugin error:',e);}",
+        "}else{",
+        "try{_FS_.start();_FS_.started=true;}catch(e){console.error('[FileSplitter] start error:',e);return false;}",
         "}",
-        "}catch(error){",
-        "console.error('[FileSplitter] Installed Vencord bootstrap failed:',error);",
+        "console.log('[FileSplitter] Started:', !!_FS_.started);",
+        "return !!_FS_.started;",
+        "}catch(e){",
+        "console.error('[FileSplitter] bootstrap error:',e);",
+        "return false;",
+        "}",
+        "}",
+        "if(!tryStart()){",
+        "var _fsRetry=setInterval(function(){if(tryStart()){clearInterval(_fsRetry);}},1000);",
+        "setTimeout(function(){clearInterval(_fsRetry);if(!_FS_.started)console.error('[FileSplitter] Failed to start after 30s');},30000);",
         "}",
         "})();",
         VENCORD_PATCH_END,
@@ -378,25 +536,215 @@ function buildInstalledVencordBootstrap() {
     ].join("\n");
 }
 
+function buildInstalledEquicordBootstrap() {
+    const pluginDef = buildInstalledVencordPluginDef();
+    return [
+        "",
+        EQUICORD_PATCH_START,
+        "(function(){",
+        "if(globalThis.__FILESPLITTER_EQUICORD_FALLBACK__) return;",
+        "globalThis.__FILESPLITTER_EQUICORD_FALLBACK__=true;",
+        pluginDef,
+        "function ensureSettings(){",
+        "try{",
+        "if(typeof Vencord==='undefined'||!Vencord)return;",
+        "if(Vencord.PlainSettings){",
+        "var p=Vencord.PlainSettings;",
+        "try{p.plugins??={};}catch(e){}",
+        "try{p.plugins.FileSplitter??={};p.plugins.FileSplitter.enabled=true;}catch(e){}",
+        "try{p.plugins.ChatInputButtonAPI??={};p.plugins.ChatInputButtonAPI.enabled=true;}catch(e){}",
+        "}",
+        "if(Vencord.Settings){",
+        "try{Vencord.Settings.plugins.FileSplitter??={};Vencord.Settings.plugins.FileSplitter.enabled=true;}catch(e){}",
+        "try{Vencord.Settings.plugins.ChatInputButtonAPI??={};Vencord.Settings.plugins.ChatInputButtonAPI.enabled=true;}catch(e){}",
+        "}",
+        "}catch(e){console.warn('[FileSplitter] ensureSettings error:',e);}",
+        "}",
+        "function tryStart(){",
+        "try{",
+        "if(typeof Vencord==='undefined'||!Vencord||!Vencord.Plugins||!Vencord.Plugins.plugins){return false;}",
+        "var WP=Vencord.Webpack;",
+        "if(!WP||typeof WP.findByProps!=='function'){return false;}",
+        "var React=WP.findByProps('createElement','useState');",
+        "if(!React||typeof React.createElement!=='function'){console.log('[FileSplitter] Waiting for React...');return false;}",
+        "var plugins=Vencord.Plugins.plugins;",
+        "if(_FS_.started){return true;}",
+        "console.log('[FileSplitter] Bootstrap starting...');",
+        "ensureSettings();",
+        "var existing=plugins.FileSplitter;",
+        "if(existing&&existing!==_FS_){",
+        "try{if(existing.started&&typeof existing.stop==='function')existing.stop();}catch(e){console.warn('[FileSplitter] stop previous error:',e);}",
+        "existing.started=false;",
+        "}",
+        "_FS_.enabledByDefault=true;",
+        "_FS_.dependencies=['ChatInputButtonAPI'];",
+        "plugins.FileSplitter=_FS_;",
+        "var manager=Vencord.Api&&Vencord.Api.PluginManager;",
+        "if(manager&&manager.plugins&&manager.plugins!==plugins){manager.plugins.FileSplitter=_FS_;}",
+        "if(manager&&typeof manager.startDependenciesRecursive==='function'){",
+        "try{manager.startDependenciesRecursive(_FS_);}catch(e){}",
+        "}",
+        "try{_FS_.start();_FS_.started=true;}catch(e){console.error('[FileSplitter] start error:',e);return false;}",
+        "return !!_FS_.started;",
+        "}catch(e){",
+        "console.error('[FileSplitter] bootstrap error:',e);",
+        "return false;",
+        "}",
+        "}",
+        "if(!tryStart()){",
+        "var _fsRetry=setInterval(function(){if(tryStart()){clearInterval(_fsRetry);}},1000);",
+        "setTimeout(function(){clearInterval(_fsRetry);if(!_FS_.started)console.error('[FileSplitter] Failed to start after 30s');},30000);",
+        "}",
+        "})();",
+        EQUICORD_PATCH_END,
+        ""
+    ].join("\n");
+}
+
 async function install(options = {}) {
     const paths = getPaths(options);
+
+    if (!fs.existsSync(paths.asarPath) && !fs.existsSync(paths.asarBak)) {
+        throw new Error("equicord.asar not found at: " + paths.asarPath);
+    }
+
+    // First-time backup (original clean asar, never overwritten)
     const backupCreated = ensureBackup(paths);
 
-    if (fs.existsSync(paths.rendererPath)) {
-        const existing = readRenderer(paths);
-        if (existing.includes(PLUGIN_MARKER)) {
-            fs.writeFileSync(paths.rendererPath, removeExistingPlugin(existing));
-            injectPlugin(paths);
-            return { paths, backupCreated, mode: "updated-existing-renderer" };
+    // Extract from CURRENT asar (handles Equicord auto-updates)
+    // Falls back to backup if asar was removed
+    const extractSource = fs.existsSync(paths.asarPath) ? paths.asarPath : paths.asarBak;
+    extractArchiveSync(extractSource, paths.equicordFolder);
+
+    // Sanitize: remove any previous FileSplitter patches
+    const existing = readRenderer(paths);
+    const sanitized = removeInstalledEquicordPatch(removeExistingPlugin(existing));
+    fs.writeFileSync(paths.rendererPath, sanitized);
+
+    // Try inline injection (registers plugin in Equicord's plugin registry)
+    let inlineInjected = false;
+    try {
+        injectPlugin(paths);
+        inlineInjected = true;
+    } catch (e) {
+        console.warn("Inline plugin injection failed (bootstrap will handle it):", e.message);
+        fs.writeFileSync(paths.rendererPath, sanitized);
+    }
+
+    // Append bootstrap fallback
+    const fallback = buildInstalledEquicordBootstrap();
+    const current = readRenderer(paths).trimEnd();
+    fs.writeFileSync(paths.rendererPath, `${current}\n${fallback}`);
+
+    // Inject IPC fetch handler into patcher.js and preload.js (bypasses CORS)
+    let ipcInjected = false;
+    try {
+        const eqPatcherPath = path.join(paths.equicordFolder, "patcher.js");
+        const eqPreloadPath = path.join(paths.equicordFolder, "preload.js");
+
+        // Add IPC handler to patcher.js (main process)
+        let patcherCode = fs.readFileSync(eqPatcherPath, "utf8");
+        const ipcHandler = '\ntry{require("electron").ipcMain.handle("FileSplitterFetchBlob",async function(e,u){var r=await require("electron").net.fetch(u);if(!r.ok)throw new Error("HTTP "+r.status);return Buffer.from(await r.arrayBuffer());});}catch(e){}\n';
+        const licenseIdx = patcherCode.lastIndexOf("/*! For license");
+        if (licenseIdx !== -1) {
+            patcherCode = patcherCode.slice(0, licenseIdx) + ipcHandler + patcherCode.slice(licenseIdx);
+        } else {
+            patcherCode += ipcHandler;
+        }
+        fs.writeFileSync(eqPatcherPath, patcherCode);
+
+        // Add fetchBlob bridge to preload.js (exposes IPC to renderer)
+        let preloadCode = fs.readFileSync(eqPreloadPath, "utf8");
+        // Find the ipcRenderer.invoke wrapper function name (e.g. "r" in: function r(e,...o){return n.ipcRenderer.invoke(e,...o)})
+        const invokeMatch = preloadCode.match(/function (\w+)\(\w+[^)]*\)\{return \w+\.ipcRenderer\.invoke\(/);
+        const invokeFn = invokeMatch ? invokeMatch[1] : "r";
+        // Find the pluginHelpers variable name (e.g. "S" in: pluginHelpers:S})
+        const phMatch = preloadCode.match(/pluginHelpers:(\w+)\}/);
+        if (phMatch) {
+            const phVar = phMatch[1];
+            const oldT = `pluginHelpers:${phVar}}`;
+            const newT = `pluginHelpers:${phVar},fileSplitter:{fetchBlob:function(u){return ${invokeFn}("FileSplitterFetchBlob",u)}}}`;
+            preloadCode = preloadCode.replace(oldT, newT);
+            fs.writeFileSync(eqPreloadPath, preloadCode);
+            ipcInjected = true;
+            console.log(`  IPC fetch handler injected (invoke=${invokeFn}, helpers=${phVar})`);
+        } else {
+            console.warn("  Could not find preload injection point (pluginHelpers:VAR})");
+        }
+    } catch (e) {
+        console.warn("  IPC handler injection failed:", e.message);
+    }
+
+    // Repack patched folder back into equicord.asar
+    repackArchiveSync(paths.equicordFolder, paths.asarPath);
+
+    return { paths, backupCreated, inlineInjected, ipcInjected, mode: "patched-renderer" };
+}
+
+function injectVencordIpc(paths) {
+    const IPC_MARKER = "/* FILESPLITTER_IPC */";
+    const ipcHandler = `\n${IPC_MARKER}\ntry{require("electron").ipcMain.handle("FileSplitterFetchBlob",async function(e,u){var r=await require("electron").net.fetch(u);if(!r.ok)throw new Error("HTTP "+r.status);return Buffer.from(await r.arrayBuffer());});}catch(e){}\n${IPC_MARKER}\n`;
+
+    // Patch patcher.js (main process IPC handler)
+    if (fs.existsSync(paths.patcherPath)) {
+        if (!fs.existsSync(paths.patcherBak)) {
+            fs.copyFileSync(paths.patcherPath, paths.patcherBak);
+        }
+        let code = fs.readFileSync(paths.patcherPath, "utf8");
+        // Remove old injection
+        if (code.includes(IPC_MARKER)) {
+            const s = code.indexOf(IPC_MARKER);
+            const e = code.indexOf(IPC_MARKER, s + IPC_MARKER.length);
+            if (e !== -1) code = code.slice(0, s) + code.slice(e + IPC_MARKER.length);
+        }
+        const licenseIdx = code.lastIndexOf("/*! For license");
+        if (licenseIdx !== -1) {
+            code = code.slice(0, licenseIdx) + ipcHandler + code.slice(licenseIdx);
+        } else {
+            code += ipcHandler;
+        }
+        fs.writeFileSync(paths.patcherPath, code);
+        console.log("  Vencord patcher.js: IPC handler injected");
+    }
+
+    // Patch preload.js (bridge to renderer)
+    if (fs.existsSync(paths.preloadPath)) {
+        if (!fs.existsSync(paths.preloadBak)) {
+            fs.copyFileSync(paths.preloadPath, paths.preloadBak);
+        }
+        let code = fs.readFileSync(paths.preloadPath, "utf8");
+        // Remove old injection
+        if (code.includes(IPC_MARKER)) {
+            const s = code.indexOf(IPC_MARKER);
+            const e = code.indexOf(IPC_MARKER, s + IPC_MARKER.length);
+            if (e !== -1) code = code.slice(0, s) + code.slice(e + IPC_MARKER.length);
+        }
+        const invokeMatch = code.match(/function (\w+)\(\w+[^)]*\)\{return \w+\.ipcRenderer\.invoke\(/);
+        const invokeFn = invokeMatch ? invokeMatch[1] : "r";
+        const phMatch = code.match(/pluginHelpers:(\w+)\}/);
+        if (phMatch) {
+            const phVar = phMatch[1];
+            code = code.replace(
+                `pluginHelpers:${phVar}}`,
+                `pluginHelpers:${phVar},fileSplitter:{fetchBlob:function(u){return ${invokeFn}("FileSplitterFetchBlob",u)}}}`
+            );
+            fs.writeFileSync(paths.preloadPath, code);
+            console.log(`  Vencord preload.js: bridge injected (invoke=${invokeFn}, helpers=${phVar})`);
+            return true;
+        } else {
+            console.warn("  Vencord preload.js: could not find injection point");
         }
     }
+    return false;
+}
 
-    if (!fs.existsSync(paths.rendererPath)) {
-        resetExtractedFolder(paths);
+function restoreVencordIpc(paths) {
+    if (fs.existsSync(paths.patcherBak)) {
+        fs.copyFileSync(paths.patcherBak, paths.patcherPath);
     }
-
-    injectPlugin(paths);
-    return { paths, backupCreated, mode: "patched-renderer" };
+    if (fs.existsSync(paths.preloadBak)) {
+        fs.copyFileSync(paths.preloadBak, paths.preloadPath);
+    }
 }
 
 function installInstalledVencord(options = {}) {
@@ -406,7 +754,16 @@ function installInstalledVencord(options = {}) {
     const sanitized = removeInstalledVencordPatch(removeExistingPlugin(existing)).trimEnd();
     const bootstrap = buildInstalledVencordBootstrap();
     fs.writeFileSync(paths.rendererPath, `${sanitized}\n${bootstrap}`);
-    return { paths, backupCreated, mode: "patched-vencord-renderer" };
+
+    // Inject IPC fetch handler (CORS bypass via main process)
+    let ipcInjected = false;
+    try {
+        ipcInjected = injectVencordIpc(paths);
+    } catch (e) {
+        console.warn("  Vencord IPC injection failed:", e.message);
+    }
+
+    return { paths, backupCreated, ipcInjected, mode: "patched-vencord-renderer" };
 }
 
 function ensureRepoRoot(repoRoot) {
@@ -458,6 +815,7 @@ function restoreInstalledVencord(options = {}) {
     }
 
     fs.copyFileSync(paths.rendererBak, paths.rendererPath);
+    restoreVencordIpc(paths);
     return { paths };
 }
 
@@ -1197,5 +1555,8 @@ module.exports = {
     installInstalledVencord,
     restore,
     restoreInstalledVencord,
-    status
+    status,
+    getPaths,
+    extractArchiveSync,
+    repackArchiveSync
 };
