@@ -1,16 +1,12 @@
-import definePlugin, { PluginNative } from "@utils/types";
+import definePlugin from "@utils/types";
 import { addChatBarButton, removeChatBarButton, ChatBarButton } from "@api/ChatButtons";
-import { CloudUpload as TCloudUpload } from "@vencord/discord-types";
-import { CloudUploadPlatform } from "@vencord/discord-types/enums";
 import { findLazy } from "@webpack";
 import { Constants, FluxDispatcher, MessageStore, React, RestAPI, SelectedChannelStore, SnowflakeUtils, Toasts } from "@webpack/common";
 
-const Native = VencordNative.pluginHelpers.FileSplitter as PluginNative<typeof import("./native")>;
-
-const CloudUpload: typeof TCloudUpload = findLazy(m => m.prototype?.trackUploadFinished);
+const CloudUpload = findLazy(m => m.prototype?.trackUploadFinished);
 
 const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB
-const CHUNK_TIMEOUT = 30 * 60 * 1000; // 30 minutes (increased from 5min for slow uploads)
+const CHUNK_TIMEOUT = 30 * 60 * 1000; // 30 minutes
 
 interface ChunkData {
     index: number;
@@ -63,7 +59,6 @@ async function downloadBlob(blob: Blob, filename: string) {
             const data = new Uint8Array(buffer);
             DiscordNative.fileManager.saveWithDialog(data, filename);
         } catch (e) {
-            // Fallback: open blob URL in new tab
             console.warn("[FileSplitter] saveWithDialog failed, using fallback:", e);
             const url = URL.createObjectURL(blob);
             window.open(url);
@@ -100,16 +95,13 @@ function normalizeAttachmentUrl(url: string | null | undefined) {
 }
 
 function getAttachmentUrl(attachment: any) {
-    return normalizeAttachmentUrl(
-        attachment?.url
+    return attachment?.url
         ?? attachment?.proxy_url
         ?? attachment?.download_url
         ?? attachment?.proxyUrl
-        ?? null
-    );
+        ?? null;
 }
 
-// --- Try to parse chunk metadata from message content ---
 function parseChunkMeta(content: string): any | null {
     try {
         const c = JSON.parse(content);
@@ -231,21 +223,21 @@ function getMessageElement(channelId: string, messageId: string, attachmentUrl?:
         `[data-message-id="${messageId}"]`,
         `[id$="-${messageId}"]`
     ];
-
-    for (const selector of fallbackSelectors) {
-        const el = document.querySelector(selector);
+    for (const sel of fallbackSelectors) {
+        const el = document.querySelector(sel);
         if (el instanceof HTMLElement) return el;
     }
 
     if (attachmentUrl) {
-        const normalizedAttachmentUrl = normalizeAttachmentUrl(attachmentUrl)?.split("?")[0];
+        let normalizedAttachmentUrl = normalizeAttachmentUrl(attachmentUrl);
+        normalizedAttachmentUrl = normalizedAttachmentUrl?.split("?")[0] ?? null;
         if (!normalizedAttachmentUrl) return null;
 
         const links = Array.from(document.querySelectorAll("a[href]"));
         for (const link of links) {
-            const href = normalizeAttachmentUrl((link as HTMLAnchorElement).href)?.split("?")[0];
+            let href = normalizeAttachmentUrl((link as HTMLAnchorElement).href);
+            href = href?.split("?")[0] ?? null;
             if (href !== normalizedAttachmentUrl) continue;
-
             const container = link.closest("[id^='chat-messages-'], [data-list-item-id^='chat-messages___'], li, article, [class*='message']");
             if (container instanceof HTMLElement) return container;
         }
@@ -480,11 +472,9 @@ function renderMergedResult(key: string) {
     if (!mount) return;
 
     hideChunkMessages(key);
-
     const existing = document.querySelector(`[data-filesplitter-preview="${key}"]`);
-    existing?.remove();
+    if (existing) existing.remove();
     mount.replaceChildren(createResultCardNode(result));
-    console.log("[FileSplitter] Result card inserted into message", anchorChunk.messageId);
 }
 
 function renderAllMergedResults() {
@@ -512,33 +502,13 @@ function clearMergedResults() {
 // --- Fetch a URL as blob ---
 async function fetchBlob(url: string): Promise<Blob> {
     const normalizedUrl = normalizeAttachmentUrl(url) ?? url;
-
-    // Method 1: Native IPC (main process fetch, bypasses CSP)
-    if (IS_DISCORD_DESKTOP) {
-        try {
-            const result = await Native.fetchChunk(normalizedUrl);
-            if (result.status >= 200 && result.status < 300 && result.data) {
-                const binary = atob(result.data);
-                const bytes = new Uint8Array(binary.length);
-                for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-                return new Blob([bytes]);
-            }
-            console.warn("[FileSplitter] Native fetch returned", result.status, result.data?.substring(0, 100));
-        } catch (e) {
-            console.warn("[FileSplitter] Native fetch failed:", e);
-        }
-    }
-
-    // Method 2: direct fetch (works on web)
     try {
         const r = await fetch(normalizedUrl);
         if (r.ok) return await r.blob();
-        console.warn("[FileSplitter] fetch returned", r.status);
     } catch (e) {
         console.warn("[FileSplitter] fetch failed:", e);
     }
-
-    throw new Error("All fetch methods failed for: " + normalizedUrl.substring(0, 80));
+    throw new Error("Failed to fetch chunk: " + normalizedUrl.substring(0, 80));
 }
 
 async function assembleBlob(key: string) {
@@ -547,7 +517,6 @@ async function assembleBlob(key: string) {
 
     const parts: Blob[] = [];
     for (let i = 0; i < entry.ch.length; i++) {
-        console.log("[FileSplitter] Fetching chunk", i + 1, "url:", entry.ch[i].url.substring(0, 80));
         parts.push(await fetchBlob(entry.ch[i].url));
     }
 
@@ -596,7 +565,6 @@ async function ensureMergedResult(key: string, eagerImagePreview = false) {
         result.objectUrl = URL.createObjectURL(blob);
         result.status = "ready";
         result.error = undefined;
-        console.log("[FileSplitter] Preview ready for", result.originalName);
     } catch (e: any) {
         result.status = "error";
         result.error = e?.message ?? String(e);
@@ -657,18 +625,16 @@ async function tryMergeChunks(key: string) {
 
     entry.mg = true;
     entry.ch.sort((a, b) => a.index - b.index);
+
     hideChunkMessages(key);
     void ensureMergedResult(key, isInlinePreviewableImage(entry.ch[0].originalName));
 }
 
-// --- Process a single chunk message ---
 function processChunk(c: any, attachmentUrl: string) {
     const normalizedUrl = normalizeAttachmentUrl(attachmentUrl);
     if (!normalizedUrl) return;
 
-    const { key, entry } = storeChunk(c, normalizedUrl);
-
-    console.log("[FileSplitter] Chunk", c.index + 1, "/", c.total, "for", c.originalName, "| collected:", entry.ch.length);
+    const { key } = storeChunk(c, normalizedUrl);
     void tryMergeChunks(key);
 }
 
@@ -689,7 +655,6 @@ function processMessage(message: any) {
     return true;
 }
 
-// --- Scan existing messages in channel for chunks ---
 function scanExistingMessages(channelId: string) {
     try {
         const messages = getStoredMessages(channelId);
@@ -714,7 +679,7 @@ function scanExistingMessages(channelId: string) {
 function uploadChunk(channelId: string, chunkFile: File, metadata: any): Promise<void> {
     return new Promise((resolve, reject) => {
         try {
-            const uploader = new CloudUpload({ file: chunkFile, platform: CloudUploadPlatform.WEB }, channelId);
+            const uploader = new CloudUpload({ file: chunkFile, platform: 1 }, channelId);
 
             uploader.on("complete", () => {
                 RestAPI.post({
@@ -830,6 +795,7 @@ export default definePlugin({
             name: "sioaeko",
         },
     ],
+    dependencies: ["ChatInputButtonAPI"],
 
     _onMessageCreate: undefined as any,
     _onMessageUpdate: undefined as any,
@@ -839,44 +805,22 @@ export default definePlugin({
     _delayedChannelScan: undefined as any,
 
     start() {
-        // Garbage collection interval
-        this._cleanupInterval = setInterval(() => {
-            const now = Date.now();
-            Object.keys(cs).forEach(k => {
-                if (now - cs[k].lu > CHUNK_TIMEOUT) {
-                    console.log("[FileSplitter] Expired chunks for:", k);
-                    delete cs[k];
-                }
-            });
-        }, 60000);
+        clearMergedResults();
 
-        // Real-time chunk detection
         this._onMessageCreate = (d: any) => {
-            try {
-                processMessage(d.message);
-            } catch (e) {
-                console.error("[FileSplitter] Handler error:", e);
-            }
+            try { processMessage(d.message); } catch (e) { console.error("[FileSplitter] MESSAGE_CREATE error:", e); }
         };
-
         this._onMessageUpdate = (d: any) => {
-            try {
-                processMessage(d.message);
-            } catch (e) {
-                console.error("[FileSplitter] Update handler error:", e);
-            }
+            try { processMessage(d.message); } catch (e) { console.error("[FileSplitter] MESSAGE_UPDATE error:", e); }
         };
-
         this._onLoadMessagesSuccess = (d: any) => {
-            if (d.channelId) {
+            if (d?.channelId) {
                 scanExistingMessages(d.channelId);
                 renderAllMergedResults();
             }
         };
-
-        // Scan existing messages when switching channels
         this._onChannelSelect = (d: any) => {
-            if (d.channelId) {
+            if (d?.channelId) {
                 scanExistingMessages(d.channelId);
                 renderAllMergedResults();
                 clearTimeout(this._delayedChannelScan);
@@ -891,9 +835,16 @@ export default definePlugin({
         FluxDispatcher.subscribe("MESSAGE_UPDATE", this._onMessageUpdate);
         FluxDispatcher.subscribe("LOAD_MESSAGES_SUCCESS", this._onLoadMessagesSuccess);
         FluxDispatcher.subscribe("CHANNEL_SELECT", this._onChannelSelect);
+
         addChatBarButton("FileSplitter", SplitButton, SplitIcon);
 
-        // Scan current channel on plugin start
+        this._cleanupInterval = setInterval(() => {
+            const now = Date.now();
+            for (const key of Object.keys(cs)) {
+                if (now - cs[key].lu > CHUNK_TIMEOUT) delete cs[key];
+            }
+        }, 60000);
+
         const currentChannel = SelectedChannelStore.getChannelId();
         if (currentChannel) {
             scanExistingMessages(currentChannel);
@@ -903,7 +854,6 @@ export default definePlugin({
                 renderAllMergedResults();
             }, 1500);
         }
-
     },
 
     stop() {
