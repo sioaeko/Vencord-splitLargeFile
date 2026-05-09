@@ -6,11 +6,13 @@ The project now supports both source-based installs and a release patcher for al
 
 ## Quick Install
 
-Most users should install with the Windows patcher from the latest GitHub release:
+Most users should install with the release patcher from the latest GitHub release:
 
 1. Fully close Discord.
-2. Download `FileSplitterPatcher.exe` from the [latest release](https://github.com/sioaeko/Vencord-splitLargeFile/releases/latest).
-3. Run `FileSplitterPatcher.exe` by double-clicking it, or open PowerShell in the folder where the exe was downloaded and run `.\FileSplitterPatcher.exe`.
+2. Download the patcher for your OS from the [latest release](https://github.com/sioaeko/Vencord-splitLargeFile/releases/latest):
+   - Windows: `FileSplitterPatcher.exe`
+   - Apple Silicon macOS: `FileSplitterPatcher-macos-arm64.zip`
+3. Run the patcher.
 4. Choose `Installed Equicord` or `Installed Vencord`.
 5. Click `Install / Update`.
 6. Reopen Discord and enable `FileSplitter` in the plugin list if it is not already enabled.
@@ -28,7 +30,7 @@ If Discord is already running during install, restart it after the patcher finis
 - Keeps the original filename for downloads
 - Avoids the old forced auto-download flow for rebuilt files
 - Supports installed **Equicord**, installed **Vencord**, and source repo installs
-- Includes a Windows release patcher with backup/restore/status flows
+- Includes Windows and Apple Silicon macOS release patchers with backup/restore/status flows
 
 ## Screenshots
 
@@ -94,12 +96,14 @@ There are three supported ways to use FileSplitter.
 
 ### Option 1: Release Patcher For Installed Clients
 
-Recommended for most Windows users who already use installed Equicord or Vencord.
+Recommended for most Windows and Apple Silicon macOS users who already use installed Equicord or Vencord.
 
 Download:
 https://github.com/sioaeko/Vencord-splitLargeFile/releases/latest
 
-Download `FileSplitterPatcher.exe` and choose the mode that matches your setup. If you run it from PowerShell, make sure the terminal is opened in the same folder as the downloaded exe.
+Download the patcher for your OS and choose the mode that matches your setup.
+
+#### Windows
 
 For example, if the exe is in your Downloads folder:
 
@@ -114,6 +118,19 @@ If you cloned this repository and built the exe locally, use the `dist` path ins
 .\dist\FileSplitterPatcher.exe
 ```
 
+#### Apple Silicon macOS
+
+Download `FileSplitterPatcher-macos-arm64.zip`, unzip it, then run:
+
+```bash
+cd ~/Downloads
+chmod +x FileSplitterPatcher-macos-arm64
+xattr -d com.apple.quarantine FileSplitterPatcher-macos-arm64 2>/dev/null || true
+./FileSplitterPatcher-macos-arm64
+```
+
+The macOS build is ad-hoc signed by the release workflow, but it is not notarized by Apple. If Gatekeeper blocks it, remove the quarantine attribute with the `xattr` command above and run it from Terminal.
+
 Supported release-patcher targets:
 
 - Installed Equicord
@@ -124,7 +141,7 @@ Supported release-patcher targets:
 #### Installed Equicord / Installed Vencord
 
 1. Fully close Discord.
-2. Run `FileSplitterPatcher.exe` from the folder where it was downloaded.
+2. Run the release patcher for your OS from the folder where it was downloaded.
 3. Choose `Installed Equicord` or `Installed Vencord`.
 4. Click `Install / Update`.
 5. Start Discord again.
@@ -134,7 +151,7 @@ The patcher stores a backup next to your client files. Use `Restore` in the GUI,
 
 #### Source Repo (Vencord / Equicord)
 
-1. Run `FileSplitterPatcher.exe`.
+1. Run the release patcher for your OS.
 2. Choose `Source Repo (Vencord)` or `Source Repo (Equicord)`.
 3. Select your local repo root.
 4. Build/inject your client again.
@@ -231,7 +248,7 @@ Command meaning:
 - `--status-vencord`: check installed Vencord patch status
 - `--install-source --repo <path>`: copy the source plugin into `src/userplugins/fileSplitter`
 
-For a release exe, the same commands work after replacing `node patcher.js` with the exe path:
+For a release binary, the same commands work after replacing `node patcher.js` with the downloaded file path:
 
 ```powershell
 cd "$env:USERPROFILE\Downloads"
@@ -240,6 +257,24 @@ cd "$env:USERPROFILE\Downloads"
 
 # Or, from this repository after building:
 .\dist\FileSplitterPatcher.exe --install
+```
+
+For the Apple Silicon macOS release binary:
+
+```bash
+cd ~/Downloads
+./FileSplitterPatcher-macos-arm64 --install
+./FileSplitterPatcher-macos-arm64 --install-vencord
+```
+
+Build release binaries from this repo:
+
+```bash
+npm run build:exe
+npm run build:mac-arm64
+
+# On macOS, sign the Apple Silicon binary:
+npm run build:mac-arm64:signed
 ```
 
 ## How It Works In Practice
@@ -288,10 +323,10 @@ cat filename.part001 filename.part002 filename.part003 > originalfile
 
 | Target | Supported | Notes |
 |------|------|------|
-| Installed Equicord | Yes | Supported by the release patcher |
-| Installed Vencord | Yes | Supported by the release patcher |
-| Vencord source repo | Yes | Supported by the release patcher and manual install |
-| Equicord source repo | Yes | Supported by the release patcher and manual install |
+| Installed Equicord | Yes | Supported by the Windows and Apple Silicon macOS release patchers |
+| Installed Vencord | Yes | Supported by the Windows and Apple Silicon macOS release patchers |
+| Vencord source repo | Yes | Supported by the release patchers and manual install |
+| Equicord source repo | Yes | Supported by the release patchers and manual install |
 | Plain Discord without Vencord/Equicord | No | The patcher does not install a mod client by itself |
 
 ## Technical Details
@@ -311,7 +346,7 @@ cat filename.part001 filename.part002 filename.part003 > originalfile
 ## Troubleshooting
 
 **Q: I cannot build the plugin from source**
-A: Use the release patcher instead. `FileSplitterPatcher.exe` is intended specifically for users who do not want to deal with source builds or repo layout changes.
+A: Use the release patcher instead. `FileSplitterPatcher.exe` on Windows or `FileSplitterPatcher-macos-arm64` on Apple Silicon macOS is intended specifically for users who do not want to deal with source builds or repo layout changes.
 
 **Q: The plugin does not show up after patching**
 A: Fully close Discord, patch the correct target, then restart Discord. If you are using a source repo, rebuild/inject again after copying the plugin.

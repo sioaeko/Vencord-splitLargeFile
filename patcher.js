@@ -20,6 +20,9 @@ function isMac() {
 }
 
 function getBinaryLabel() {
+    if (process.pkg) {
+        return path.basename(process.execPath);
+    }
     return isWindows() ? "FileSplitterPatcher.exe" : "FileSplitterPatcher";
 }
 
