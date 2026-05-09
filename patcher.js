@@ -1184,7 +1184,7 @@ function runPowerShellScript(scriptText) {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "filesplitter-patcher-"));
     const scriptPath = path.join(tempDir, "script.ps1");
     const selfCommand = process.pkg
-        ? { command: process.execPath, args: [] }
+        ? { command: process.argv[0], args: [] }
         : { command: process.execPath, args: [__filename] };
 
     try {

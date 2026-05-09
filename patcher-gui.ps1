@@ -207,15 +207,15 @@ function Get-ActionLabel {
     param([string]$Action)
 
     if ($Action -eq "install") {
-        return "Install complete."
+        return "Install"
     }
     if ($Action -eq "restore") {
-        return "Restore complete."
+        return "Restore"
     }
     if ($Action -eq "restart") {
-        return "Restart complete."
+        return "Restart"
     }
-    return "Status check complete."
+    return "Status check"
 }
 
 function Format-ActionOutput {
@@ -225,7 +225,12 @@ function Format-ActionOutput {
     )
 
     $parts = New-Object System.Collections.Generic.List[string]
-    [void]$parts.Add((Get-ActionLabel $Action))
+    $label = Get-ActionLabel $Action
+    if ($Result.ExitCode -eq 0) {
+        [void]$parts.Add("$label complete.")
+    } else {
+        [void]$parts.Add("$label failed.")
+    }
     if (-not [string]::IsNullOrWhiteSpace($Result.Stdout)) {
         [void]$parts.Add($Result.Stdout)
     }
@@ -339,23 +344,24 @@ $emit = {
         $message = Format-ActionOutput $action $result
         $resultBox.Text = $message
         $resultBox.Visible = $true
-        $hint.Text = Get-ActionLabel $action
-        $statusLabel.Text = Get-ActionLabel $action
+        $actionLabel = if ($result.ExitCode -eq 0) { "$(Get-ActionLabel $action) complete." } else { "$(Get-ActionLabel $action) failed." }
+        $hint.Text = $actionLabel
+        $statusLabel.Text = $actionLabel
         $statusLabel.ForeColor = if ($result.ExitCode -eq 0) { [System.Drawing.Color]::ForestGreen } else { [System.Drawing.Color]::Firebrick }
         $form.Refresh()
 
         if ($result.ExitCode -eq 0 -and ($action -eq "install" -or $action -eq "restore") -and $modeBox.SelectedIndex -lt 2 -and $restartCheck.Checked) {
-            $hint.Text = "$(Get-ActionLabel $action) Restarting Discord..."
+            $hint.Text = "$actionLabel Restarting Discord..."
             $form.Refresh()
             $restartResult = Invoke-RestartAction
             $restartMessage = Format-ActionOutput "restart" $restartResult
             $message = "$message`r`n`r`n$restartMessage"
             $resultBox.Text = $message
             if ($restartResult.ExitCode -eq 0) {
-                $statusLabel.Text = "$(Get-ActionLabel $action) Discord restarted."
+                $statusLabel.Text = "$actionLabel Discord restarted."
                 $statusLabel.ForeColor = [System.Drawing.Color]::ForestGreen
             } else {
-                $statusLabel.Text = "$(Get-ActionLabel $action) Restart failed."
+                $statusLabel.Text = "$actionLabel Restart failed."
                 $statusLabel.ForeColor = [System.Drawing.Color]::DarkOrange
             }
             $hint.Text = $statusLabel.Text
