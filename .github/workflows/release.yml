@@ -37,9 +37,7 @@ jobs:
       - run: npm ci
       - run: npm run build:mac-arm64
       - run: codesign --force --sign - dist/FileSplitterPatcher-macos-arm64
-      - run: |
-          cd dist
-          ditto -c -k --sequesterRsrc --keepParent FileSplitterPatcher-macos-arm64 FileSplitterPatcher-macos-arm64.zip
+      - run: zip -j dist/FileSplitterPatcher-macos-arm64.zip dist/FileSplitterPatcher-macos-arm64
       - uses: actions/upload-artifact@v4
         with:
           name: macos-arm64
