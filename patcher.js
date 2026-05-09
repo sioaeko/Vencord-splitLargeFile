@@ -1222,29 +1222,25 @@ end run
         return;
     }
 
-    const safeTitle = title.replace(/'/g, "''");
-    const safeMessage = message.replace(/'/g, "''");
+    const safeIcon = ["Information", "Warning", "Error"].includes(icon) ? icon : "Information";
+    const iconFlag = safeIcon === "Error" ? 16 : safeIcon === "Warning" ? 48 : 64;
+    const encodedTitle = Buffer.from(title, "utf16le").toString("base64");
+    const encodedMessage = Buffer.from(message, "utf16le").toString("base64");
     const script = `
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
-
-$owner = New-Object System.Windows.Forms.Form
-$owner.Text = '${safeTitle}'
-$owner.StartPosition = 'CenterScreen'
-$owner.Size = New-Object System.Drawing.Size(1, 1)
-$owner.ShowInTaskbar = $false
-$owner.TopMost = $true
-$owner.Opacity = 0
+$ErrorActionPreference = 'Stop'
+$title = [System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String('${encodedTitle}'))
+$message = [System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String('${encodedMessage}'))
 
 try {
-    [void]$owner.Show()
-    $owner.Activate()
-    [System.Windows.Forms.MessageBox]::Show($owner, '${safeMessage}', '${safeTitle}',
+    $shell = New-Object -ComObject WScript.Shell
+    $shell.Popup($message, 0, $title, ${iconFlag + 4096}) | Out-Null
+} catch {
+    Add-Type -AssemblyName System.Windows.Forms
+    [System.Windows.Forms.MessageBox]::Show($message, $title,
         [System.Windows.Forms.MessageBoxButtons]::OK,
-        [System.Windows.Forms.MessageBoxIcon]::${icon}) | Out-Null
-} finally {
-    $owner.Close()
-    $owner.Dispose()
+        [System.Windows.Forms.MessageBoxIcon]::${safeIcon},
+        [System.Windows.Forms.MessageBoxDefaultButton]::Button1,
+        [System.Windows.Forms.MessageBoxOptions]::ServiceNotification) | Out-Null
 }
 `;
     runPowerShellScript(script);
@@ -1302,7 +1298,8 @@ function appendGuiRestartSummary(lines, restart) {
 
 function formatInstalledSuccessMessage(result, restart) {
     const lines = [
-        result.backupCreated ? "Success: Backup created." : "Success: Using existing backup.",
+        "Install complete.",
+        result.backupCreated ? "Backup created." : "Using existing backup.",
         `Renderer updated:\n${result.paths.rendererPath}`
     ];
 
@@ -1313,7 +1310,8 @@ function formatInstalledSuccessMessage(result, restart) {
 
 function formatInstalledVencordSuccessMessage(result, restart) {
     const lines = [
-        result.backupCreated ? "Success: Vencord backup created." : "Success: Using existing Vencord backup.",
+        "Install complete.",
+        result.backupCreated ? "Vencord backup created." : "Using existing Vencord backup.",
         `Renderer updated:\n${result.paths.rendererPath}`
     ];
 
@@ -1324,7 +1322,8 @@ function formatInstalledVencordSuccessMessage(result, restart) {
 
 function formatInstalledVencordRestoreMessage(result, restart) {
     const lines = [
-        "Success: Restored Vencord renderer from backup.",
+        "Restore complete.",
+        "Restored Vencord renderer from backup.",
         `Backup used:\n${result.paths.rendererBak}`
     ];
 
@@ -1335,7 +1334,8 @@ function formatInstalledVencordRestoreMessage(result, restart) {
 
 function formatRestoreSuccessMessage(result, restart) {
     const lines = [
-        "Success: Restored from backup.",
+        "Restore complete.",
+        "Restored from backup.",
         `Backup used:\n${result.paths.asarBak}`
     ];
 
