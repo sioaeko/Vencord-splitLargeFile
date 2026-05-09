@@ -10,6 +10,15 @@ const EQUICORD_PATCH_START = "/* FILESPLITTER_EQUICORD_PATCH_START */";
 const EQUICORD_PATCH_END = "/* FILESPLITTER_EQUICORD_PATCH_END */";
 const ROOT_DIR = __dirname;
 const PLATFORM = process.platform;
+const MAC_CLIENT_NAMES = ["Discord", "Discord PTB", "Discord Canary", "Equicord", "Equilotl"];
+const WINDOWS_CLIENTS = [
+    ["Discord", "Discord.exe"],
+    ["DiscordPTB", "DiscordPTB.exe"],
+    ["DiscordCanary", "DiscordCanary.exe"],
+    ["DiscordDevelopment", "DiscordDevelopment.exe"],
+    ["Equicord", "Equicord.exe"],
+    ["Equilotl", "Equilotl.exe"]
+];
 
 function isWindows() {
     return PLATFORM === "win32";
@@ -925,9 +934,8 @@ function resolveClientExecutable(options = {}) {
     }
 
     if (isMac()) {
-        const appNames = ["Discord", "Equicord", "Equilotl"];
         const bundleCandidates = [];
-        for (const appName of appNames) {
+        for (const appName of MAC_CLIENT_NAMES) {
             const appByScript = runOptionalCommand("osascript", [
                 "-e",
                 `POSIX path of (path to application "${appName}")`
@@ -947,13 +955,8 @@ function resolveClientExecutable(options = {}) {
     }
 
     const localAppData = getLocalAppDataRoot(options);
-    const processCandidates = [
-        ["Discord", "Discord.exe"],
-        ["Equicord", "Equicord.exe"],
-        ["Equilotl", "Equilotl.exe"]
-    ];
 
-    for (const [processName, exeName] of processCandidates) {
+    for (const [processName, exeName] of WINDOWS_CLIENTS) {
         try {
             const output = execFileSync("powershell.exe", [
                 "-NoProfile",
@@ -989,12 +992,14 @@ function runOptionalCommand(command, args, options = {}) {
 }
 
 function stopClientProcesses() {
-    const names = ["Discord", "Equicord", "Equilotl"];
     const stopped = [];
     const errors = [];
 
     if (isMac()) {
-        for (const name of names) {
+        const runningNames = new Set(listRunningClientProcesses());
+        for (const name of MAC_CLIENT_NAMES) {
+            if (!runningNames.has(name)) continue;
+
             runOptionalCommand("osascript", ["-e", `tell application "${name}" to quit`]);
             sleep(500);
 
@@ -1013,7 +1018,10 @@ function stopClientProcesses() {
         return { stopped, errors };
     }
 
-    for (const name of names) {
+    const runningNames = new Set(listRunningClientProcesses().map(name => name.replace(/\.exe$/i, "")));
+    for (const [name] of WINDOWS_CLIENTS) {
+        if (!runningNames.has(name)) continue;
+
         const taskkill = runOptionalCommand("taskkill.exe", ["/IM", `${name}.exe`, "/T", "/F"]);
         if (taskkill.ok) {
             stopped.push(name);
@@ -1048,7 +1056,7 @@ function listRunningClientProcesses() {
                 .map(line => path.basename(line.trim()))
                 .filter(Boolean)
                 .map(name => name.replace(/\.app$/i, ""))
-                .filter(name => ["Discord", "Equicord", "Equilotl"].includes(name));
+                .filter(name => MAC_CLIENT_NAMES.includes(name));
         } catch {
             return [];
         }
@@ -1060,7 +1068,7 @@ function listRunningClientProcesses() {
             .map(line => line.trim())
             .filter(Boolean)
             .map(line => line.replace(/^"|"$/g, "").split('","')[0])
-            .filter(name => ["Discord.exe", "Equicord.exe", "Equilotl.exe"].includes(name));
+            .filter(name => WINDOWS_CLIENTS.some(([, exeName]) => exeName === name));
     } catch {
         return [];
     }
@@ -1218,9 +1226,26 @@ end run
     const safeMessage = message.replace(/'/g, "''");
     const script = `
 Add-Type -AssemblyName System.Windows.Forms
-[System.Windows.Forms.MessageBox]::Show('${safeMessage}','${safeTitle}',
-    [System.Windows.Forms.MessageBoxButtons]::OK,
-    [System.Windows.Forms.MessageBoxIcon]::${icon}) | Out-Null
+Add-Type -AssemblyName System.Drawing
+
+$owner = New-Object System.Windows.Forms.Form
+$owner.Text = '${safeTitle}'
+$owner.StartPosition = 'CenterScreen'
+$owner.Size = New-Object System.Drawing.Size(1, 1)
+$owner.ShowInTaskbar = $false
+$owner.TopMost = $true
+$owner.Opacity = 0
+
+try {
+    [void]$owner.Show()
+    $owner.Activate()
+    [System.Windows.Forms.MessageBox]::Show($owner, '${safeMessage}', '${safeTitle}',
+        [System.Windows.Forms.MessageBoxButtons]::OK,
+        [System.Windows.Forms.MessageBoxIcon]::${icon}) | Out-Null
+} finally {
+    $owner.Close()
+    $owner.Dispose()
+}
 `;
     runPowerShellScript(script);
 }
@@ -1256,24 +1281,32 @@ function formatRestartLines(restart) {
     return lines;
 }
 
+function appendGuiRestartSummary(lines, restart) {
+    if (!restart) return;
+
+    if (restart.restarted) {
+        lines.push(`Discord restarted:\n${path.basename(restart.executablePath)}`);
+    } else {
+        lines.push(`Discord restart skipped:\n${restart.reason ?? "Unknown error"}`);
+    }
+
+    if (restart.stopped?.length) {
+        lines.push(`Stopped processes:\n${restart.stopped.join(", ")}`);
+    }
+
+    const warnings = restart.stopErrors?.filter(Boolean) ?? [];
+    if (warnings.length) {
+        lines.push(`Warnings:\n${warnings.join("\n")}`);
+    }
+}
+
 function formatInstalledSuccessMessage(result, restart) {
     const lines = [
         result.backupCreated ? "Success: Backup created." : "Success: Using existing backup.",
         `Renderer updated:\n${result.paths.rendererPath}`
     ];
 
-    if (restart) {
-        if (restart.restarted) {
-            lines.push(`Discord restarted:\n${path.basename(restart.executablePath)}`);
-        } else {
-            lines.push(`Discord restart skipped:\n${restart.reason ?? "Unknown error"}`);
-        }
-    }
-
-    const warnings = restart?.stopErrors?.filter(Boolean) ?? [];
-    if (warnings.length) {
-        lines.push(`Warnings:\n${warnings.join("\n")}`);
-    }
+    appendGuiRestartSummary(lines, restart);
 
     return lines.join("\n\n");
 }
@@ -1284,18 +1317,7 @@ function formatInstalledVencordSuccessMessage(result, restart) {
         `Renderer updated:\n${result.paths.rendererPath}`
     ];
 
-    if (restart) {
-        if (restart.restarted) {
-            lines.push(`Discord restarted:\n${path.basename(restart.executablePath)}`);
-        } else {
-            lines.push(`Discord restart skipped:\n${restart.reason ?? "Unknown error"}`);
-        }
-    }
-
-    const warnings = restart?.stopErrors?.filter(Boolean) ?? [];
-    if (warnings.length) {
-        lines.push(`Warnings:\n${warnings.join("\n")}`);
-    }
+    appendGuiRestartSummary(lines, restart);
 
     return lines.join("\n\n");
 }
@@ -1306,18 +1328,7 @@ function formatInstalledVencordRestoreMessage(result, restart) {
         `Backup used:\n${result.paths.rendererBak}`
     ];
 
-    if (restart) {
-        if (restart.restarted) {
-            lines.push(`Discord restarted:\n${path.basename(restart.executablePath)}`);
-        } else {
-            lines.push(`Discord restart skipped:\n${restart.reason ?? "Unknown error"}`);
-        }
-    }
-
-    const warnings = restart?.stopErrors?.filter(Boolean) ?? [];
-    if (warnings.length) {
-        lines.push(`Warnings:\n${warnings.join("\n")}`);
-    }
+    appendGuiRestartSummary(lines, restart);
 
     return lines.join("\n\n");
 }
@@ -1328,18 +1339,7 @@ function formatRestoreSuccessMessage(result, restart) {
         `Backup used:\n${result.paths.asarBak}`
     ];
 
-    if (restart) {
-        if (restart.restarted) {
-            lines.push(`Discord restarted:\n${path.basename(restart.executablePath)}`);
-        } else {
-            lines.push(`Discord restart skipped:\n${restart.reason ?? "Unknown error"}`);
-        }
-    }
-
-    const warnings = restart?.stopErrors?.filter(Boolean) ?? [];
-    if (warnings.length) {
-        lines.push(`Warnings:\n${warnings.join("\n")}`);
-    }
+    appendGuiRestartSummary(lines, restart);
 
     return lines.join("\n\n");
 }
