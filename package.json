@@ -23,6 +23,9 @@
     "assets": [
       "FileSplitter.tsx",
       "native.ts",
+      "src/equicordplugins/fileSplitter/index.tsx",
+      "src/equicordplugins/fileSplitter/native.ts",
+      "src/equicordplugins/fileSplitter/styles.css",
       "injected-plugin.template.js",
       "patcher-gui.ps1",
       "patcher-gui.applescript"

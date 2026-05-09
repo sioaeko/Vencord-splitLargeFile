@@ -644,7 +644,16 @@ async function install(options = {}) {
 
         // Add IPC handler to patcher.js (main process)
         let patcherCode = fs.readFileSync(eqPatcherPath, "utf8");
-        const ipcHandler = '\ntry{require("electron").ipcMain.handle("FileSplitterFetchBlob",async function(e,u){var r=await require("electron").net.fetch(u);if(!r.ok)throw new Error("HTTP "+r.status);return Buffer.from(await r.arrayBuffer());});}catch(e){}\n';
+        const ipcMarker = "/* FILESPLITTER_IPC */";
+        const ipcHandlerBody = 'try{require("electron").ipcMain.handle("FileSplitterFetchBlob",async function(e,u){var r=await require("electron").net.fetch(u);if(!r.ok)throw new Error("HTTP "+r.status);return Buffer.from(await r.arrayBuffer());});}catch(e){}';
+        const ipcHandler = `\n${ipcMarker}\n${ipcHandlerBody}\n${ipcMarker}\n`;
+        while (patcherCode.includes(ipcMarker)) {
+            const start = patcherCode.indexOf(ipcMarker);
+            const end = patcherCode.indexOf(ipcMarker, start + ipcMarker.length);
+            if (end === -1) break;
+            patcherCode = patcherCode.slice(0, start) + patcherCode.slice(end + ipcMarker.length);
+        }
+        patcherCode = patcherCode.split(ipcHandlerBody).join("");
         const licenseIdx = patcherCode.lastIndexOf("/*! For license");
         if (licenseIdx !== -1) {
             patcherCode = patcherCode.slice(0, licenseIdx) + ipcHandler + patcherCode.slice(licenseIdx);
@@ -656,20 +665,25 @@ async function install(options = {}) {
         // Add fetchBlob bridge to preload.js (exposes IPC to renderer)
         let preloadCode = fs.readFileSync(eqPreloadPath, "utf8");
         // Find the ipcRenderer.invoke wrapper function name (e.g. "r" in: function r(e,...o){return n.ipcRenderer.invoke(e,...o)})
-        const invokeMatch = preloadCode.match(/function (\w+)\(\w+[^)]*\)\{return \w+\.ipcRenderer\.invoke\(/);
-        const invokeFn = invokeMatch ? invokeMatch[1] : "r";
-        // Find the pluginHelpers variable name (e.g. "S" in: pluginHelpers:S})
-        const phMatch = preloadCode.match(/pluginHelpers:(\w+)\}/);
-        if (phMatch) {
-            const phVar = phMatch[1];
-            const oldT = `pluginHelpers:${phVar}}`;
-            const newT = `pluginHelpers:${phVar},fileSplitter:{fetchBlob:function(u){return ${invokeFn}("FileSplitterFetchBlob",u)}}}`;
-            preloadCode = preloadCode.replace(oldT, newT);
-            fs.writeFileSync(eqPreloadPath, preloadCode);
+        if (preloadCode.includes('fileSplitter:{fetchBlob:function')) {
             ipcInjected = true;
-            console.log(`  IPC fetch handler injected (invoke=${invokeFn}, helpers=${phVar})`);
+            console.log("  IPC fetch bridge already present");
         } else {
-            console.warn("  Could not find preload injection point (pluginHelpers:VAR})");
+            const invokeMatch = preloadCode.match(/function (\w+)\(\w+[^)]*\)\{return \w+\.ipcRenderer\.invoke\(/);
+            const invokeFn = invokeMatch ? invokeMatch[1] : "r";
+            // Find the pluginHelpers variable name (e.g. "S" in: pluginHelpers:S})
+            const phMatch = preloadCode.match(/pluginHelpers:(\w+)\}/);
+            if (phMatch) {
+                const phVar = phMatch[1];
+                const oldT = `pluginHelpers:${phVar}}`;
+                const newT = `pluginHelpers:${phVar},fileSplitter:{fetchBlob:function(u){return ${invokeFn}("FileSplitterFetchBlob",u)}}}`;
+                preloadCode = preloadCode.replace(oldT, newT);
+                fs.writeFileSync(eqPreloadPath, preloadCode);
+                ipcInjected = true;
+                console.log(`  IPC fetch handler injected (invoke=${invokeFn}, helpers=${phVar})`);
+            } else {
+                console.warn("  Could not find preload injection point (pluginHelpers:VAR})");
+            }
         }
     } catch (e) {
         console.warn("  IPC handler injection failed:", e.message);
@@ -779,8 +793,10 @@ function installSourceRepo(options = {}) {
     const repoRoot = ensureRepoRoot(options.repo);
     const pluginDir = path.join(repoRoot, "src", "userplugins", "fileSplitter");
     fs.mkdirSync(pluginDir, { recursive: true });
-    fs.copyFileSync(getAssetPath("FileSplitter.tsx"), path.join(pluginDir, "index.tsx"));
-    fs.copyFileSync(getAssetPath("native.ts"), path.join(pluginDir, "native.ts"));
+    const sourceDir = path.join("src", "equicordplugins", "fileSplitter");
+    fs.copyFileSync(getAssetPath(path.join(sourceDir, "index.tsx")), path.join(pluginDir, "index.tsx"));
+    fs.copyFileSync(getAssetPath(path.join(sourceDir, "native.ts")), path.join(pluginDir, "native.ts"));
+    fs.copyFileSync(getAssetPath(path.join(sourceDir, "styles.css")), path.join(pluginDir, "styles.css"));
     return { repoRoot, pluginDir };
 }
 
@@ -791,7 +807,8 @@ function statusSourceRepo(options = {}) {
         repoRoot,
         pluginDir,
         indexExists: fs.existsSync(path.join(pluginDir, "index.tsx")),
-        nativeExists: fs.existsSync(path.join(pluginDir, "native.ts"))
+        nativeExists: fs.existsSync(path.join(pluginDir, "native.ts")),
+        stylesExists: fs.existsSync(path.join(pluginDir, "styles.css"))
     };
 }
 
@@ -863,6 +880,7 @@ function printSourceStatus(state) {
     console.log(`- plugin dir: ${state.pluginDir}`);
     console.log(`- index.tsx: ${state.indexExists ? "present" : "missing"}`);
     console.log(`- native.ts: ${state.nativeExists ? "present" : "missing"}`);
+    console.log(`- styles.css: ${state.stylesExists ? "present" : "missing"}`);
 }
 
 function printInstalledVencordStatus(state) {
@@ -1466,7 +1484,8 @@ async function runCli(argv = process.argv.slice(2)) {
                 showMessage("FileSplitterPatcher", [
                     `${sourceFlavorLabel} source plugin status`,
                     `index.tsx: ${sourceState.indexExists ? "present" : "missing"}`,
-                    `native.ts: ${sourceState.nativeExists ? "present" : "missing"}`
+                    `native.ts: ${sourceState.nativeExists ? "present" : "missing"}`,
+                    `styles.css: ${sourceState.stylesExists ? "present" : "missing"}`
                 ].join("\n"));
                 return;
             }

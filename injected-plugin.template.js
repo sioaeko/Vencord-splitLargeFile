@@ -11,7 +11,15 @@ var cs={};
 var mergedResults=new Map();
 var processedMessageIds=new Set();
 var lastRenderedVersion=new Map();
-function downloadBlob(blob,filename){
+async function downloadBlob(blob,filename){
+if(typeof DiscordNative!=="undefined"&&DiscordNative.fileManager&&typeof DiscordNative.fileManager.saveWithDialog==="function"){
+try{
+var buffer=await blob.arrayBuffer();
+await DiscordNative.fileManager.saveWithDialog(new Uint8Array(buffer),filename);
+return;
+}catch(e){
+console.warn("[FileSplitter] saveWithDialog failed, using browser fallback:",e);
+}}
 var url=URL.createObjectURL(blob);
 var a=document.createElement("a");
 a.href=url;
@@ -20,9 +28,8 @@ document.body.appendChild(a);
 a.click();
 document.body.removeChild(a);
 setTimeout(function(){URL.revokeObjectURL(url);},60000);
-return Promise.resolve();
 }
-function getChunkKey(c){return c.originalName+"_"+c.timestamp;}
+function getChunkKey(c){return c.originalName+"_"+(c.originalSize==null?"unknown":c.originalSize)+"_"+c.timestamp;}
 function normalizeAttachmentUrl(url){
 if(!url)return null;
 try{
@@ -44,7 +51,7 @@ null
 function parseChunkMeta(content){
 try{
 var c=JSON.parse(content);
-if(typeof c==="object"&&c&&c.type==="FileSplitterChunk"&&typeof c.index==="number"&&typeof c.total==="number"&&typeof c.originalName==="string"&&typeof c.timestamp==="number")return c;
+if(typeof c==="object"&&c&&c.type==="FileSplitterChunk"&&Number.isInteger(c.index)&&c.index>=0&&Number.isInteger(c.total)&&c.total>0&&c.index<c.total&&typeof c.originalName==="string"&&typeof c.originalSize==="number"&&Number.isFinite(c.originalSize)&&typeof c.timestamp==="number")return c;
 }catch{}
 return null;
 }
@@ -333,7 +340,7 @@ actions.style.display="flex";
 actions.style.gap="8px";
 actions.style.flexShrink="0";
 if(result.status==="error"){
-actions.appendChild(createActionButton("Retry",function(){void ensureMergedResult(result.key,result.isImage);}));
+actions.appendChild(createActionButton("Retry",function(){if(result.isImage)void ensureMergedResult(result.key,true);else void handleDownload(result.key);}));
 }else{
 var downloadButton=createActionButton("Download",function(){void handleDownload(result.key);});
 downloadButton.disabled=result.status==="loading"&&!result.blob;
@@ -446,14 +453,21 @@ var result=mergedResults.get(key);
 if(!result)return;
 try{
 if(!result.blob){
+result.status="loading";
+result.error=undefined;
+renderMergedResult(key,true);
 var assembled=await assembleBlob(key);
 result.blob=assembled.blob;
 result.mimeType=assembled.mimeType;
+result.status="ready";
 }
 await downloadBlob(result.blob,result.originalName);
 }catch(e){
+result.status="error";
+result.error=e&&e.message?e.message:String(e);
 console.error("[FileSplitter] Download failed:",e);
 C.Toasts.show({message:"Download failed: "+(e&&e.message?e.message:String(e)),id:C.Toasts.genId(),type:C.Toasts.Type.FAILURE});
+renderMergedResult(key,true);
 return;
 }
 C.Toasts.show({message:"Downloaded: "+result.originalName,id:C.Toasts.genId(),type:C.Toasts.Type.SUCCESS});
@@ -462,7 +476,10 @@ renderMergedResult(key);
 function storeChunk(c,attachmentUrl){
 var key=getChunkKey(c);
 if(!cs[key])cs[key]={ch:[],lu:Date.now()};
-if(!cs[key].ch.some(function(x){return x.index===c.index;})){
+var existing=cs[key].ch.find(function(x){return x.index===c.index;});
+if(existing){
+Object.assign(existing,Object.assign({},c,{url:attachmentUrl}));
+}else{
 cs[key].ch.push(Object.assign({},c,{url:attachmentUrl}));
 }
 cs[key].lu=Date.now();
@@ -560,6 +577,11 @@ C.Toasts.show({message:"Splitting "+file.name+" into "+totalChunks+" chunks...",
 setStatus("0%");
 try{
 var channelId=C.SelectedChannelStore.getChannelId();
+if(!channelId){
+C.Toasts.show({message:"No channel selected.",id:C.Toasts.genId(),type:C.Toasts.Type.FAILURE});
+setStatus(null);
+return;
+}
 var uploadTimestamp=Date.now();
 for(var i=0;i<totalChunks;i++){
 var start=i*CHUNK_SIZE;
@@ -584,15 +606,15 @@ return el(__CHAT_BAR_BUTTON__,{tooltip:label,onClick:status?function(){}:doUploa
 self._cleanupInterval=setInterval(function(){
 var now=Date.now();
 Object.keys(cs).forEach(function(k){
-if(now-cs[k].lu>CHUNK_TIMEOUT)delete cs[k];
+if(!cs[k].mg&&now-cs[k].lu>CHUNK_TIMEOUT)delete cs[k];
 });
 },60000);
 self._onMessageCreate=function(d){try{processMessage(d.message);}catch(e){console.error("[FileSplitter] Handler error:",e);}};
 self._onMessageUpdate=function(d){try{if(d.message&&d.message.id)processedMessageIds.delete(d.message.id);processMessage(d.message);}catch(e){console.error("[FileSplitter] Update handler error:",e);}};
-var pendingRender=null;
+self._pendingRender=null;
 function scheduleRender(){
-if(pendingRender)return;
-pendingRender=requestAnimationFrame(function(){pendingRender=null;renderAllMergedResults();});
+if(self._pendingRender)return;
+self._pendingRender=requestAnimationFrame(function(){self._pendingRender=null;renderAllMergedResults();});
 }
 self._onLoadMessagesSuccess=function(d){if(d&&d.channelId){scanExistingMessages(d.channelId);scheduleRender();}};
 self._onChannelSelect=function(d){if(d&&d.channelId){scanExistingMessages(d.channelId);scheduleRender();clearTimeout(self._delayedChannelScan);self._delayedChannelScan=setTimeout(function(){scanExistingMessages(d.channelId);scheduleRender();},1500);}};
@@ -618,7 +640,7 @@ if(this._onChannelSelect)C.FluxDispatcher.unsubscribe("CHANNEL_SELECT",this._onC
 __REMOVE_CBB__("FileSplitter");
 if(this._cleanupInterval)clearInterval(this._cleanupInterval);
 if(this._delayedChannelScan)clearTimeout(this._delayedChannelScan);
+if(this._pendingRender)cancelAnimationFrame(this._pendingRender);
 if(this._clearMergedResults)this._clearMergedResults();
-processedMessageIds.clear();
 }
 });

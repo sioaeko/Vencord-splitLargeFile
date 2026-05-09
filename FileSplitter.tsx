@@ -76,8 +76,8 @@ async function downloadBlob(blob: Blob, filename: string) {
     }
 }
 
-function getChunkKey(c: Pick<ChunkData, "originalName" | "timestamp">) {
-    return `${c.originalName}_${c.timestamp}`;
+function getChunkKey(c: Pick<ChunkData, "originalName" | "timestamp"> & Partial<Pick<ChunkData, "originalSize">>) {
+    return `${c.originalName}_${c.originalSize ?? "unknown"}_${c.timestamp}`;
 }
 
 function normalizeAttachmentUrl(url: string | null | undefined) {
@@ -106,8 +106,11 @@ function parseChunkMeta(content: string): any | null {
     try {
         const c = JSON.parse(content);
         if (typeof c === "object" && c.type === "FileSplitterChunk" &&
-            typeof c.index === "number" && typeof c.total === "number" &&
-            typeof c.originalName === "string" && typeof c.timestamp === "number") {
+            Number.isInteger(c.index) && c.index >= 0 &&
+            Number.isInteger(c.total) && c.total > 0 && c.index < c.total &&
+            typeof c.originalName === "string" &&
+            typeof c.originalSize === "number" && Number.isFinite(c.originalSize) &&
+            typeof c.timestamp === "number") {
             return c;
         }
     } catch { }
@@ -443,7 +446,8 @@ function createResultCardNode(result: MergedResult) {
 
     if (result.status === "error") {
         actions.appendChild(createActionButton("Retry", () => {
-            void ensureMergedResult(result.key, result.isImage);
+            if (result.isImage) void ensureMergedResult(result.key, true);
+            else void handleDownload(result.key);
         }));
     } else {
         const downloadButton = createActionButton("Download", () => {
@@ -580,13 +584,20 @@ async function handleDownload(key: string) {
 
     try {
         if (!result.blob) {
+            result.status = "loading";
+            result.error = undefined;
+            renderMergedResult(key);
+
             const assembled = await assembleBlob(key);
             result.blob = assembled.blob;
             result.mimeType = assembled.mimeType;
+            result.status = "ready";
         }
 
         await downloadBlob(result.blob, result.originalName);
     } catch (e: any) {
+        result.status = "error";
+        result.error = e?.message ?? String(e);
         console.error("[FileSplitter] Download failed:", e);
         Toasts.show({
             message: `Download failed: ${e?.message ?? e}`,
@@ -608,7 +619,10 @@ function storeChunk(c: ChunkData, attachmentUrl: string) {
     const key = getChunkKey(c);
     if (!cs[key]) cs[key] = { ch: [], lu: Date.now() };
 
-    if (!cs[key].ch.some(x => x.index === c.index)) {
+    const existing = cs[key].ch.find(x => x.index === c.index);
+    if (existing) {
+        Object.assign(existing, { ...c, url: attachmentUrl });
+    } else {
         cs[key].ch.push({ ...c, url: attachmentUrl });
     }
 
@@ -741,6 +755,12 @@ const SplitButton = () => {
 
             try {
                 const channelId = SelectedChannelStore.getChannelId();
+                if (!channelId) {
+                    Toasts.show({ message: "No channel selected.", id: Toasts.genId(), type: Toasts.Type.FAILURE });
+                    setStatus(null);
+                    return;
+                }
+
                 const uploadTimestamp = Date.now();
                 for (let i = 0; i < totalChunks; i++) {
                     const start = i * CHUNK_SIZE;
@@ -841,7 +861,7 @@ export default definePlugin({
         this._cleanupInterval = setInterval(() => {
             const now = Date.now();
             for (const key of Object.keys(cs)) {
-                if (now - cs[key].lu > CHUNK_TIMEOUT) delete cs[key];
+                if (!cs[key].mg && now - cs[key].lu > CHUNK_TIMEOUT) delete cs[key];
             }
         }, 60000);
 

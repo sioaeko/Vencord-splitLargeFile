@@ -115,6 +115,15 @@ Supported release-patcher targets:
 
 Use this if you already maintain a local Vencord/Equicord source checkout.
 
+The PR-ready plugin source lives in:
+
+```text
+src/equicordplugins/fileSplitter/
+```
+
+For personal installs, copy those files into `src/userplugins/fileSplitter/`.
+For an Equicord PR, copy the folder into `src/equicordplugins/fileSplitter/`, add yourself to `EquicordDevs`, and target Equicord's `dev` branch.
+
 #### Vencord
 
 1. Clone the Vencord source:
@@ -128,8 +137,9 @@ Use this if you already maintain a local Vencord/Equicord source checkout.
    ```
 3. Copy the plugin files:
    ```bash
-   curl -o src/userplugins/fileSplitter/index.tsx https://raw.githubusercontent.com/sioaeko/Vencord-splitLargeFile/main/FileSplitter.tsx
-   curl -o src/userplugins/fileSplitter/native.ts https://raw.githubusercontent.com/sioaeko/Vencord-splitLargeFile/main/native.ts
+   curl -o src/userplugins/fileSplitter/index.tsx https://raw.githubusercontent.com/sioaeko/Vencord-splitLargeFile/main/src/equicordplugins/fileSplitter/index.tsx
+   curl -o src/userplugins/fileSplitter/native.ts https://raw.githubusercontent.com/sioaeko/Vencord-splitLargeFile/main/src/equicordplugins/fileSplitter/native.ts
+   curl -o src/userplugins/fileSplitter/styles.css https://raw.githubusercontent.com/sioaeko/Vencord-splitLargeFile/main/src/equicordplugins/fileSplitter/styles.css
    ```
 4. Build and inject:
    ```bash
@@ -151,8 +161,9 @@ Use this if you already maintain a local Vencord/Equicord source checkout.
    ```
 3. Copy the plugin files:
    ```bash
-   curl -o src/userplugins/fileSplitter/index.tsx https://raw.githubusercontent.com/sioaeko/Vencord-splitLargeFile/main/FileSplitter.tsx
-   curl -o src/userplugins/fileSplitter/native.ts https://raw.githubusercontent.com/sioaeko/Vencord-splitLargeFile/main/native.ts
+   curl -o src/userplugins/fileSplitter/index.tsx https://raw.githubusercontent.com/sioaeko/Vencord-splitLargeFile/main/src/equicordplugins/fileSplitter/index.tsx
+   curl -o src/userplugins/fileSplitter/native.ts https://raw.githubusercontent.com/sioaeko/Vencord-splitLargeFile/main/src/equicordplugins/fileSplitter/native.ts
+   curl -o src/userplugins/fileSplitter/styles.css https://raw.githubusercontent.com/sioaeko/Vencord-splitLargeFile/main/src/equicordplugins/fileSplitter/styles.css
    ```
 4. Build and inject:
    ```bash
