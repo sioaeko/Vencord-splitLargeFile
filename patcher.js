@@ -1183,9 +1183,6 @@ function runAppleScript(scriptText, args = []) {
 function runPowerShellScript(scriptText) {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "filesplitter-patcher-"));
     const scriptPath = path.join(tempDir, "script.ps1");
-    const selfCommand = process.pkg
-        ? { command: process.argv[0], args: [] }
-        : { command: process.execPath, args: [__filename] };
 
     try {
         fs.writeFileSync(scriptPath, scriptText, "utf8");
@@ -1195,11 +1192,7 @@ function runPowerShellScript(scriptText) {
             "-STA",
             "-File", scriptPath
         ], {
-            encoding: "utf8",
-            env: {
-                ...process.env,
-                FILESPLITTER_PATCHER_SELF: JSON.stringify(selfCommand)
-            }
+            encoding: "utf8"
         });
     } finally {
         try {
@@ -1213,6 +1206,15 @@ function showGui() {
         ? runAppleScript(readAssetText("patcher-gui.applescript"))
         : runPowerShellScript(readAssetText("patcher-gui.ps1"))).trim();
     if (!output) return null;
+
+    const encodedLine = output.split(/\r?\n/)
+        .map(line => line.trim())
+        .find(line => line.startsWith("FILESPLITTER_PATCHER_GUI:"));
+    if (encodedLine) {
+        const encodedJson = encodedLine.slice("FILESPLITTER_PATCHER_GUI:".length);
+        return JSON.parse(Buffer.from(encodedJson, "base64").toString("utf16le"));
+    }
+
     return JSON.parse(output);
 }
 
@@ -1249,6 +1251,63 @@ try {
         [System.Windows.Forms.MessageBoxDefaultButton]::Button1,
         [System.Windows.Forms.MessageBoxOptions]::ServiceNotification) | Out-Null
 }
+`;
+    runPowerShellScript(script);
+}
+
+function showResultWindow(title, message, icon = "Information") {
+    if (isMac()) {
+        showMessage(title, message, icon);
+        return;
+    }
+
+    const safeIcon = ["Information", "Warning", "Error"].includes(icon) ? icon : "Information";
+    const encodedTitle = Buffer.from(title, "utf16le").toString("base64");
+    const encodedMessage = Buffer.from(message, "utf16le").toString("base64");
+    const script = `
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+[System.Windows.Forms.Application]::EnableVisualStyles()
+
+$titleText = [System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String('${encodedTitle}'))
+$messageText = [System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String('${encodedMessage}'))
+
+$form = New-Object System.Windows.Forms.Form
+$form.Text = $titleText
+$form.StartPosition = "CenterScreen"
+$form.Size = New-Object System.Drawing.Size(680, 420)
+$form.FormBorderStyle = "FixedDialog"
+$form.MaximizeBox = $false
+$form.MinimizeBox = $false
+$form.TopMost = $true
+
+$status = New-Object System.Windows.Forms.Label
+$status.Text = ($messageText -split "\\r?\\n" | Select-Object -First 1)
+$status.Location = New-Object System.Drawing.Point(18, 16)
+$status.Size = New-Object System.Drawing.Size(630, 24)
+$status.Font = New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)
+$status.ForeColor = if ('${safeIcon}' -eq 'Error') { [System.Drawing.Color]::Firebrick } elseif ('${safeIcon}' -eq 'Warning') { [System.Drawing.Color]::DarkOrange } else { [System.Drawing.Color]::ForestGreen }
+$form.Controls.Add($status)
+
+$box = New-Object System.Windows.Forms.TextBox
+$box.Location = New-Object System.Drawing.Point(20, 52)
+$box.Size = New-Object System.Drawing.Size(624, 270)
+$box.Multiline = $true
+$box.ReadOnly = $true
+$box.ScrollBars = "Vertical"
+$box.Text = $messageText
+$form.Controls.Add($box)
+
+$okButton = New-Object System.Windows.Forms.Button
+$okButton.Text = "OK"
+$okButton.Location = New-Object System.Drawing.Point(560, 334)
+$okButton.Size = New-Object System.Drawing.Size(84, 32)
+$okButton.Add_Click({ $form.Close() })
+$form.Controls.Add($okButton)
+$form.AcceptButton = $okButton
+
+[void]$form.ShowDialog()
 `;
     runPowerShellScript(script);
 }
@@ -1450,14 +1509,16 @@ async function runCli(argv = process.argv.slice(2)) {
 
                 if (selection.action === "restore") {
                     const restored = restore(installedOptions);
-                    const restart = selection.restartClient ? restartClient(installedOptions) : null;
-                    showMessage("FileSplitterPatcher", formatRestoreSuccessMessage(restored, restart));
+                    const message = formatRestoreSuccessMessage(restored, null);
+                    showResultWindow("FileSplitterPatcher", selection.restartClient ? `${message}\n\nClose this window to restart Discord.` : message);
+                    if (selection.restartClient) restartClient(installedOptions);
                     return;
                 }
 
                 const installed = await install(installedOptions);
-                const restart = selection.restartClient ? restartClient(installedOptions) : null;
-                showMessage("FileSplitterPatcher", formatInstalledSuccessMessage(installed, restart));
+                const message = formatInstalledSuccessMessage(installed, null);
+                showResultWindow("FileSplitterPatcher", selection.restartClient ? `${message}\n\nClose this window to restart Discord.` : message);
+                if (selection.restartClient) restartClient(installedOptions);
                 return;
             }
 
@@ -1477,14 +1538,16 @@ async function runCli(argv = process.argv.slice(2)) {
 
                 if (selection.action === "restore") {
                     const restored = restoreInstalledVencord(installedOptions);
-                    const restart = selection.restartClient ? restartClient(installedOptions) : null;
-                    showMessage("FileSplitterPatcher", formatInstalledVencordRestoreMessage(restored, restart));
+                    const message = formatInstalledVencordRestoreMessage(restored, null);
+                    showResultWindow("FileSplitterPatcher", selection.restartClient ? `${message}\n\nClose this window to restart Discord.` : message);
+                    if (selection.restartClient) restartClient(installedOptions);
                     return;
                 }
 
                 const installed = installInstalledVencord(installedOptions);
-                const restart = selection.restartClient ? restartClient(installedOptions) : null;
-                showMessage("FileSplitterPatcher", formatInstalledVencordSuccessMessage(installed, restart));
+                const message = formatInstalledVencordSuccessMessage(installed, null);
+                showResultWindow("FileSplitterPatcher", selection.restartClient ? `${message}\n\nClose this window to restart Discord.` : message);
+                if (selection.restartClient) restartClient(installedOptions);
                 return;
             }
 
@@ -1503,7 +1566,7 @@ async function runCli(argv = process.argv.slice(2)) {
             }
 
             const sourceInstall = installSourceRepo(sourceOptions);
-            showMessage("FileSplitterPatcher", `Installed FileSplitter ${sourceFlavorLabel} source plugin into:\n${sourceInstall.pluginDir}`);
+            showResultWindow("FileSplitterPatcher", `Install complete.\n\nInstalled FileSplitter ${sourceFlavorLabel} source plugin into:\n${sourceInstall.pluginDir}`);
             return;
         }
 
@@ -1574,8 +1637,12 @@ async function runCli(argv = process.argv.slice(2)) {
         const message = error?.stack || error?.message || String(error);
         if ((argv || process.argv.slice(2)).includes("--gui") || !process.argv.slice(2).length) {
             try {
-                showMessage("FileSplitterPatcher Error", message, "Error");
-            } catch { }
+                showResultWindow("FileSplitterPatcher Error", `Install failed.\n\n${message}`, "Error");
+            } catch {
+                try {
+                    showMessage("FileSplitterPatcher Error", message, "Error");
+                } catch { }
+            }
         }
         console.error(message);
         process.exitCode = 1;

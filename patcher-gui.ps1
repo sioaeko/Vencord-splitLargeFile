@@ -6,7 +6,7 @@ Add-Type -AssemblyName System.Drawing
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "FileSplitter Patcher"
 $form.StartPosition = "CenterScreen"
-$form.Size = New-Object System.Drawing.Size(560, 420)
+$form.Size = New-Object System.Drawing.Size(560, 290)
 $form.FormBorderStyle = "FixedDialog"
 $form.MaximizeBox = $false
 $form.MinimizeBox = $false
@@ -68,178 +68,7 @@ $restartCheck.Size = New-Object System.Drawing.Size(360, 24)
 $restartCheck.Checked = $true
 $form.Controls.Add($restartCheck)
 
-$statusLabel = New-Object System.Windows.Forms.Label
-$statusLabel.Text = "Ready"
-$statusLabel.Location = New-Object System.Drawing.Point(20, 184)
-$statusLabel.Size = New-Object System.Drawing.Size(512, 18)
-$statusLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
-$statusLabel.ForeColor = [System.Drawing.Color]::DimGray
-$form.Controls.Add($statusLabel)
-
-function Show-GuiMessage {
-    param(
-        [string]$Title,
-        [string]$Message,
-        [System.Windows.Forms.MessageBoxIcon]$Icon = [System.Windows.Forms.MessageBoxIcon]::Information
-    )
-
-    [System.Windows.Forms.MessageBox]::Show($form, $Message, $Title,
-        [System.Windows.Forms.MessageBoxButtons]::OK,
-        $Icon) | Out-Null
-}
-
-function Set-Busy {
-    param([bool]$Busy)
-
-    $modeBox.Enabled = -not $Busy
-    $pathBox.Enabled = -not $Busy
-    $browseButton.Enabled = -not $Busy
-    $installButton.Enabled = -not $Busy
-    $statusButton.Enabled = -not $Busy
-    $restoreButton.Enabled = (-not $Busy) -and ($modeBox.SelectedIndex -lt 2)
-    $cancelButton.Enabled = -not $Busy
-    $restartCheck.Enabled = (-not $Busy) -and ($modeBox.SelectedIndex -lt 2)
-    $form.Cursor = if ($Busy) { [System.Windows.Forms.Cursors]::WaitCursor } else { [System.Windows.Forms.Cursors]::Default }
-    $form.Refresh()
-}
-
-function Get-PatcherSelf {
-    if ([string]::IsNullOrWhiteSpace($env:FILESPLITTER_PATCHER_SELF)) {
-        throw "Internal error: FILESPLITTER_PATCHER_SELF is not set."
-    }
-
-    return $env:FILESPLITTER_PATCHER_SELF | ConvertFrom-Json
-}
-
-function Get-CliArgs {
-    param([string]$Action)
-
-    $argList = New-Object System.Collections.Generic.List[string]
-
-    if ($modeBox.SelectedIndex -eq 0) {
-        if ($Action -eq "install") {
-            [void]$argList.Add("--install")
-        } elseif ($Action -eq "status") {
-            [void]$argList.Add("--status")
-        } else {
-            [void]$argList.Add("--restore")
-        }
-        [void]$argList.Add("--equicord-root")
-        [void]$argList.Add($pathBox.Text)
-    } elseif ($modeBox.SelectedIndex -eq 1) {
-        if ($Action -eq "install") {
-            [void]$argList.Add("--install-vencord")
-        } elseif ($Action -eq "status") {
-            [void]$argList.Add("--status-vencord")
-        } else {
-            [void]$argList.Add("--restore-vencord")
-        }
-        [void]$argList.Add("--vencord-root")
-        [void]$argList.Add($pathBox.Text)
-    } else {
-        if ($Action -eq "install") {
-            [void]$argList.Add("--install-source")
-        } else {
-            [void]$argList.Add("--status-source")
-        }
-        [void]$argList.Add("--repo")
-        [void]$argList.Add($pathBox.Text)
-    }
-
-    return $argList
-}
-
-function Invoke-PatcherAction {
-    param([string]$Action)
-
-    return Invoke-PatcherArgs (Get-CliArgs $Action)
-}
-
-function Invoke-PatcherArgs {
-    param([object]$CliArgs)
-
-    $self = Get-PatcherSelf
-    $allArgs = New-Object System.Collections.Generic.List[string]
-
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = [string]$self.command
-    $psi.UseShellExecute = $false
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
-    $psi.CreateNoWindow = $true
-
-    foreach ($arg in @($self.args)) {
-        if ($null -ne $arg -and -not [string]::IsNullOrWhiteSpace([string]$arg)) {
-            [void]$allArgs.Add([string]$arg)
-        }
-    }
-
-    foreach ($arg in $CliArgs) {
-        [void]$allArgs.Add([string]$arg)
-    }
-
-    $quotedArgs = $allArgs | ForEach-Object {
-        '"' + ([string]$_).Replace('"', '\"') + '"'
-    }
-    $psi.Arguments = ($quotedArgs -join " ")
-
-    $process = New-Object System.Diagnostics.Process
-    $process.StartInfo = $psi
-    [void]$process.Start()
-    $stdout = $process.StandardOutput.ReadToEnd()
-    $stderr = $process.StandardError.ReadToEnd()
-    $process.WaitForExit()
-
-    return [PSCustomObject]@{
-        ExitCode = $process.ExitCode
-        Stdout = $stdout.Trim()
-        Stderr = $stderr.Trim()
-    }
-}
-
-function Invoke-RestartAction {
-    $args = New-Object System.Collections.Generic.List[string]
-    [void]$args.Add("--restart-client-only")
-    return Invoke-PatcherArgs $args
-}
-
-function Get-ActionLabel {
-    param([string]$Action)
-
-    if ($Action -eq "install") {
-        return "Install"
-    }
-    if ($Action -eq "restore") {
-        return "Restore"
-    }
-    if ($Action -eq "restart") {
-        return "Restart"
-    }
-    return "Status check"
-}
-
-function Format-ActionOutput {
-    param(
-        [string]$Action,
-        [object]$Result
-    )
-
-    $parts = New-Object System.Collections.Generic.List[string]
-    $label = Get-ActionLabel $Action
-    if ($Result.ExitCode -eq 0) {
-        [void]$parts.Add("$label complete.")
-    } else {
-        [void]$parts.Add("$label failed.")
-    }
-    if (-not [string]::IsNullOrWhiteSpace($Result.Stdout)) {
-        [void]$parts.Add($Result.Stdout)
-    }
-    if (-not [string]::IsNullOrWhiteSpace($Result.Stderr)) {
-        [void]$parts.Add("Warnings / errors:`r`n$($Result.Stderr)")
-    }
-
-    return ($parts -join "`r`n`r`n")
-}
+$result = $null
 
 function Set-ModeUi {
     if ($modeBox.SelectedIndex -eq 0) {
@@ -310,80 +139,42 @@ $restoreButton.Size = New-Object System.Drawing.Size(84, 32)
 $form.Controls.Add($restoreButton)
 
 $cancelButton = New-Object System.Windows.Forms.Button
-$cancelButton.Text = "Close"
+$cancelButton.Text = "Cancel"
 $cancelButton.Location = New-Object System.Drawing.Point(480, 206)
 $cancelButton.Size = New-Object System.Drawing.Size(64, 32)
 $form.Controls.Add($cancelButton)
 
-$resultBox = New-Object System.Windows.Forms.TextBox
-$resultBox.Location = New-Object System.Drawing.Point(20, 246)
-$resultBox.Size = New-Object System.Drawing.Size(512, 116)
-$resultBox.Multiline = $true
-$resultBox.ReadOnly = $true
-$resultBox.ScrollBars = "Vertical"
-$resultBox.Visible = $false
-$form.Controls.Add($resultBox)
-
 $emit = {
     param([string]$action)
     if ([string]::IsNullOrWhiteSpace($pathBox.Text)) {
-        Show-GuiMessage "FileSplitter Patcher" "Please choose a target path." ([System.Windows.Forms.MessageBoxIcon]::Warning)
+        [System.Windows.Forms.MessageBox]::Show($form, "Please choose a target path.", "FileSplitter Patcher",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
         return
     }
 
-    try {
-        Set-Busy $true
-        $hint.Text = "Working... this may take a moment."
-        $statusLabel.Text = "Working..."
-        $statusLabel.ForeColor = [System.Drawing.Color]::DimGray
-        $resultBox.Visible = $false
-        $resultBox.Text = ""
-        $form.Refresh()
-
-        $result = Invoke-PatcherAction $action
-        $message = Format-ActionOutput $action $result
-        $resultBox.Text = $message
-        $resultBox.Visible = $true
-        $actionLabel = if ($result.ExitCode -eq 0) { "$(Get-ActionLabel $action) complete." } else { "$(Get-ActionLabel $action) failed." }
-        $hint.Text = $actionLabel
-        $statusLabel.Text = $actionLabel
-        $statusLabel.ForeColor = if ($result.ExitCode -eq 0) { [System.Drawing.Color]::ForestGreen } else { [System.Drawing.Color]::Firebrick }
-        $form.Refresh()
-
-        if ($result.ExitCode -eq 0 -and ($action -eq "install" -or $action -eq "restore") -and $modeBox.SelectedIndex -lt 2 -and $restartCheck.Checked) {
-            $hint.Text = "$actionLabel Restarting Discord..."
-            $form.Refresh()
-            $restartResult = Invoke-RestartAction
-            $restartMessage = Format-ActionOutput "restart" $restartResult
-            $message = "$message`r`n`r`n$restartMessage"
-            $resultBox.Text = $message
-            if ($restartResult.ExitCode -eq 0) {
-                $statusLabel.Text = "$actionLabel Discord restarted."
-                $statusLabel.ForeColor = [System.Drawing.Color]::ForestGreen
-            } else {
-                $statusLabel.Text = "$actionLabel Restart failed."
-                $statusLabel.ForeColor = [System.Drawing.Color]::DarkOrange
-            }
-            $hint.Text = $statusLabel.Text
-            $form.Refresh()
-        }
-
-        Set-Busy $false
-
-        if ($result.ExitCode -eq 0) {
-            Show-GuiMessage "FileSplitter Patcher" $message ([System.Windows.Forms.MessageBoxIcon]::Information)
-        } else {
-            Show-GuiMessage "FileSplitter Patcher Error" $message ([System.Windows.Forms.MessageBoxIcon]::Error)
-        }
-    } catch {
-        Set-Busy $false
-        $hint.Text = "Action failed."
-        $statusLabel.Text = "Action failed."
-        $statusLabel.ForeColor = [System.Drawing.Color]::Firebrick
-        $resultBox.Text = $_.Exception.Message
-        $resultBox.Visible = $true
-        Show-GuiMessage "FileSplitter Patcher Error" ($_.Exception.Message) ([System.Windows.Forms.MessageBoxIcon]::Error)
+    $mode = if ($modeBox.SelectedIndex -eq 0) {
+        "installed"
+    } elseif ($modeBox.SelectedIndex -eq 1) {
+        "installed-vencord"
+    } else {
+        "source"
     }
+    $sourceFlavor = if ($modeBox.SelectedIndex -eq 2) {
+        "vencord"
+    } elseif ($modeBox.SelectedIndex -eq 3) {
+        "equicord"
+    } else {
+        $null
+    }
+    $script:result = @{
+        action = $action
+        mode = $mode
+        sourceFlavor = $sourceFlavor
+        path = $pathBox.Text
+        restartClient = $restartCheck.Checked
+    } | ConvertTo-Json -Compress
+    $form.Close()
 }
 
 $installButton.Add_Click({ & $emit "install" })
@@ -393,3 +184,8 @@ $cancelButton.Add_Click({ $form.Close() })
 
 Set-ModeUi
 [void]$form.ShowDialog()
+
+if ($result) {
+    $bytes = [System.Text.Encoding]::Unicode.GetBytes($result)
+    Write-Output ("FILESPLITTER_PATCHER_GUI:" + [System.Convert]::ToBase64String($bytes))
+}
