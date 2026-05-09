@@ -1,6 +1,6 @@
-# FileSplitter - Vencord/Equicord Plugin
+# FileSplitter - Equicord Plugin
 
-FileSplitter is a Vencord/Equicord plugin that works around Discord's upload limit by splitting large files into 10MB parts on upload, then rebuilding them on the receiving side inside the client.
+FileSplitter is a Equicord plugin that works around Discord's upload limit by splitting large files into 10MB parts on upload, then rebuilding them on the receiving side inside the client.
 
 The project now supports both source-based installs and a release patcher for already-installed clients, so users who do not want to clone/build a repo can still use the full plugin.
 
