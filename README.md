@@ -10,7 +10,7 @@ Most users should install with the Windows patcher from the latest GitHub releas
 
 1. Fully close Discord.
 2. Download `FileSplitterPatcher.exe` from the [latest release](https://github.com/sioaeko/Vencord-splitLargeFile/releases/latest).
-3. Run `FileSplitterPatcher.exe`.
+3. Run `FileSplitterPatcher.exe` by double-clicking it, or open PowerShell in the folder where the exe was downloaded and run `.\FileSplitterPatcher.exe`.
 4. Choose `Installed Equicord` or `Installed Vencord`.
 5. Click `Install / Update`.
 6. Reopen Discord and enable `FileSplitter` in the plugin list if it is not already enabled.
@@ -99,7 +99,20 @@ Recommended for most Windows users who already use installed Equicord or Vencord
 Download:
 https://github.com/sioaeko/Vencord-splitLargeFile/releases/latest
 
-Download `FileSplitterPatcher.exe` and choose the mode that matches your setup.
+Download `FileSplitterPatcher.exe` and choose the mode that matches your setup. If you run it from PowerShell, make sure the terminal is opened in the same folder as the downloaded exe.
+
+For example, if the exe is in your Downloads folder:
+
+```powershell
+cd "$env:USERPROFILE\Downloads"
+.\FileSplitterPatcher.exe
+```
+
+If you cloned this repository and built the exe locally, use the `dist` path instead:
+
+```powershell
+.\dist\FileSplitterPatcher.exe
+```
 
 Supported release-patcher targets:
 
@@ -111,7 +124,7 @@ Supported release-patcher targets:
 #### Installed Equicord / Installed Vencord
 
 1. Fully close Discord.
-2. Run `FileSplitterPatcher.exe`.
+2. Run `FileSplitterPatcher.exe` from the folder where it was downloaded.
 3. Choose `Installed Equicord` or `Installed Vencord`.
 4. Click `Install / Update`.
 5. Start Discord again.
@@ -217,6 +230,17 @@ Command meaning:
 - `--restore-vencord`: restore installed Vencord from backup
 - `--status-vencord`: check installed Vencord patch status
 - `--install-source --repo <path>`: copy the source plugin into `src/userplugins/fileSplitter`
+
+For a release exe, the same commands work after replacing `node patcher.js` with the exe path:
+
+```powershell
+cd "$env:USERPROFILE\Downloads"
+.\FileSplitterPatcher.exe --install
+.\FileSplitterPatcher.exe --install-vencord
+
+# Or, from this repository after building:
+.\dist\FileSplitterPatcher.exe --install
+```
 
 ## How It Works In Practice
 
