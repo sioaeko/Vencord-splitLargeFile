@@ -199,13 +199,61 @@ return entry.ch.find(function(chunk){return chunk.channelId&&chunk.messageId&&ge
 entry.ch.find(function(chunk){return chunk.channelId&&chunk.messageId;})||
 null;
 }
+function ensureHideStyle(){
+if(document.getElementById("vc-file-splitter-hide-style"))return;
+var style=document.createElement("style");
+style.id="vc-file-splitter-hide-style";
+style.textContent="[data-filesplitter-hidden='true']{display:none!important;}";
+document.head.appendChild(style);
+}
+function isFileSplitterNode(element){
+if(!element||!(element instanceof HTMLElement))return false;
+return !!((element.closest&&(
+element.closest("[data-filesplitter-result-mount]")||
+element.closest("[data-filesplitter-preview]")
+))||element.querySelector("[data-filesplitter-result-mount], [data-filesplitter-preview]"));
+}
 function markHidden(element){
+if(isFileSplitterNode(element))return;
 if(element.dataset.filesplitterHidden==="true")return;
 element.dataset.filesplitterHidden="true";
 element.dataset.filesplitterPrevDisplay=element.style.display||"";
 element.style.display="none";
 }
+function hideAnchorChunkPayload(messageEl,chunk){
+var contentCandidates=messageEl.querySelectorAll("[id^='message-content-'], [class*='messageContent'], [class*='markup']");
+Array.from(contentCandidates).forEach(function(candidate){
+if(!(candidate instanceof HTMLElement)||isFileSplitterNode(candidate))return;
+if((candidate.textContent||"").indexOf("FileSplitterChunk")!==-1)markHidden(candidate);
+});
+var attachmentBlocks=messageEl.querySelectorAll("[class*='attachment'], [class*='mediaMosaic'], [class*='visualMediaItemContainer'], [class*='fileWrapper'], [class*='file']");
+Array.from(attachmentBlocks).forEach(function(block){
+if(!(block instanceof HTMLElement)||isFileSplitterNode(block))return;
+markHidden(block);
+});
+var attachmentHref=normalizeAttachmentUrl(chunk.url);
+attachmentHref=attachmentHref&&attachmentHref.split("?")[0];
+if(attachmentHref){
+Array.from(messageEl.querySelectorAll("a[href]")).forEach(function(link){
+if(!(link instanceof HTMLAnchorElement)||isFileSplitterNode(link))return;
+var href=normalizeAttachmentUrl(link.href);
+href=href&&href.split("?")[0];
+if(href!==attachmentHref)return;
+var target=link.closest("[class*='attachment'], [class*='fileWrapper'], [class*='file'], [class*='embed'], [class*='container'], a[href]");
+if(target instanceof HTMLElement&&target!==messageEl&&!isFileSplitterNode(target))markHidden(target);
+});
+}
+Array.from(messageEl.querySelectorAll("a, button, div, span")).forEach(function(node){
+if(!(node instanceof HTMLElement)||isFileSplitterNode(node))return;
+var text=node.textContent||"";
+if(!/FileSplitterChunk|\.part\d{3}/i.test(text))return;
+var target=node.closest("[id^='message-content-'], [class*='messageContent'], [class*='markup'], [class*='attachment'], [class*='fileWrapper'], [class*='file'], [class*='embed'], [class*='container'], a[href]");
+if(target instanceof HTMLElement&&target!==messageEl&&!isFileSplitterNode(target))markHidden(target);
+else markHidden(node);
+});
+}
 function hideChunkMessages(key){
+ensureHideStyle();
 var entry=cs[key];
 var anchorChunk=getAnchorChunk(key);
 if(!entry||!entry.ch.length||!anchorChunk||!anchorChunk.messageId)return;
@@ -218,43 +266,12 @@ if(chunk.messageId!==anchorChunk.messageId){
 markHidden(messageEl);
 continue;
 }
-var content=messageEl.querySelector("[id^='message-content-']");
-var accessories=messageEl.querySelector("[id^='message-accessories-']");
-var attachmentBlocks=messageEl.querySelectorAll("[class*='attachment'], [class*='mediaMosaic']");
 var mount=getResultMount(messageEl);
-var attachmentHref=normalizeAttachmentUrl(chunk.url);
-attachmentHref=attachmentHref&&attachmentHref.split("?")[0];
-if(content instanceof HTMLElement)markHidden(content);
-if(accessories instanceof HTMLElement){
-Array.from(accessories.children).forEach(function(child){
-if(!(child instanceof HTMLElement))return;
-if(child===mount||child.contains(mount))return;
-markHidden(child);
-});
-}
-Array.from(attachmentBlocks).forEach(function(block){
-if(!(block instanceof HTMLElement))return;
-if(block===mount||block.contains(mount)||mount.contains(block))return;
-markHidden(block);
-});
-if(attachmentHref){
-Array.from(messageEl.querySelectorAll("a[href]")).forEach(function(link){
-if(!(link instanceof HTMLAnchorElement))return;
-var href=normalizeAttachmentUrl(link.href);
-href=href&&href.split("?")[0];
-if(href!==attachmentHref)return;
-var target=link.closest("[class*='attachment'], [class*='file'], [class*='container'], a[href]");
-if(target instanceof HTMLElement&&target!==mount&&!mount.contains(target))markHidden(target);
-});
-}
-Array.from(messageEl.querySelectorAll("div, span")).forEach(function(textNode){
-if(!(textNode instanceof HTMLElement))return;
-if(!/\.part\d{3}/i.test(textNode.textContent||""))return;
-if(mount.contains(textNode)||textNode.contains(mount))return;
-var row=textNode.closest("[class*='file'], [class*='attachment'], [class*='container'], li, article, div");
-if(row instanceof HTMLElement&&row!==mount&&!mount.contains(row))markHidden(row);
-});
+hideAnchorChunkPayload(messageEl,chunk);
 }}
+function hideKnownChunkMessages(){
+Object.keys(cs).forEach(function(key){hideChunkMessages(key);});
+}
 function createActionButton(label,onClick){
 var button=document.createElement("button");
 button.type="button";
@@ -500,6 +517,7 @@ var normalizedUrl=normalizeAttachmentUrl(attachmentUrl);
 if(!normalizedUrl)return;
 var stored=storeChunk(c,normalizedUrl);
 void tryMergeChunks(stored.key);
+hideChunkMessages(stored.key);
 }
 function processMessage(message){
 if(!message||!message.content||!message.attachments||!message.attachments.length)return false;
@@ -614,7 +632,7 @@ self._onMessageUpdate=function(d){try{if(d.message&&d.message.id)processedMessag
 self._pendingRender=null;
 function scheduleRender(){
 if(self._pendingRender)return;
-self._pendingRender=requestAnimationFrame(function(){self._pendingRender=null;renderAllMergedResults();});
+self._pendingRender=requestAnimationFrame(function(){self._pendingRender=null;renderAllMergedResults();hideKnownChunkMessages();});
 }
 self._onLoadMessagesSuccess=function(d){if(d&&d.channelId){scanExistingMessages(d.channelId);scheduleRender();}};
 self._onChannelSelect=function(d){if(d&&d.channelId){scanExistingMessages(d.channelId);scheduleRender();clearTimeout(self._delayedChannelScan);self._delayedChannelScan=setTimeout(function(){scanExistingMessages(d.channelId);scheduleRender();},1500);}};
@@ -624,6 +642,11 @@ C.FluxDispatcher.subscribe("LOAD_MESSAGES_SUCCESS",self._onLoadMessagesSuccess);
 C.FluxDispatcher.subscribe("CHANNEL_SELECT",self._onChannelSelect);
 __ADD_CBB__("FileSplitter",SplitButton,SplitIcon);
 self._clearMergedResults=clearMergedResults;
+ensureHideStyle();
+if(typeof MutationObserver!=="undefined"&&document.body){
+self._hideObserver=new MutationObserver(function(){scheduleRender();});
+self._hideObserver.observe(document.body,{childList:true,subtree:true});
+}
 var currentChannel=C.SelectedChannelStore.getChannelId();
 if(currentChannel){
 scanExistingMessages(currentChannel);
@@ -641,6 +664,7 @@ __REMOVE_CBB__("FileSplitter");
 if(this._cleanupInterval)clearInterval(this._cleanupInterval);
 if(this._delayedChannelScan)clearTimeout(this._delayedChannelScan);
 if(this._pendingRender)cancelAnimationFrame(this._pendingRender);
+if(this._hideObserver)this._hideObserver.disconnect();
 if(this._clearMergedResults)this._clearMergedResults();
 }
 });

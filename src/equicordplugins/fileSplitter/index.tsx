@@ -67,6 +67,8 @@ const mergedResults = new Map<string, MergedResult>();
 const storeListeners = new Set<() => void>();
 let storeVersion = 0;
 let delayedChannelScan: ReturnType<typeof setTimeout> | undefined;
+let hideObserver: MutationObserver | undefined;
+let pendingHideSweep: number | undefined;
 
 const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
     avif: "image/avif",
@@ -226,7 +228,145 @@ function getAnchorChunk(key: string) {
     const entry = cs[key];
     if (!entry?.ch.length) return null;
 
-    return [...entry.ch].sort((a, b) => a.index - b.index)[0] ?? null;
+    return entry.ch.find(chunk => chunk.channelId && chunk.messageId && getMessageElement(chunk.channelId, chunk.messageId, chunk.url))
+        ?? [...entry.ch].sort((a, b) => a.index - b.index)[0]
+        ?? null;
+}
+
+function getMessageElement(channelId: string, messageId: string, attachmentUrl?: string) {
+    const directId = document.getElementById(`chat-messages-${channelId}-${messageId}`);
+    if (directId instanceof HTMLElement) return directId;
+
+    const fallbackSelectors = [
+        `[data-list-item-id="chat-messages___${channelId}-${messageId}"]`,
+        `[data-message-id="${messageId}"]`,
+        `[id$="-${messageId}"]`
+    ];
+
+    for (const selector of fallbackSelectors) {
+        const element = document.querySelector(selector);
+        if (element instanceof HTMLElement) return element;
+    }
+
+    if (!attachmentUrl) return null;
+
+    let normalizedAttachmentUrl = normalizeAttachmentUrl(attachmentUrl)?.split("?")[0] ?? null;
+    if (!normalizedAttachmentUrl) return null;
+
+    for (const link of Array.from(document.querySelectorAll("a[href]"))) {
+        if (!(link instanceof HTMLAnchorElement)) continue;
+
+        const href = normalizeAttachmentUrl(link.href)?.split("?")[0] ?? null;
+        if (href !== normalizedAttachmentUrl) continue;
+
+        const container = link.closest("[id^='chat-messages-'], [data-list-item-id^='chat-messages___'], li, article, [class*='message']");
+        if (container instanceof HTMLElement) return container;
+    }
+
+    return null;
+}
+
+function isFileSplitterNode(element: HTMLElement) {
+    return Boolean(element.closest(".vc-file-splitter-card") || element.querySelector(".vc-file-splitter-card"));
+}
+
+function markHidden(element: HTMLElement) {
+    if (element.dataset.filesplitterHidden === "true") return;
+
+    element.dataset.filesplitterHidden = "true";
+    element.dataset.filesplitterPrevDisplay = element.style.display || "";
+    element.style.display = "none";
+}
+
+function restoreHiddenChunkMessages() {
+    for (const node of Array.from(document.querySelectorAll("[data-filesplitter-hidden='true']"))) {
+        if (!(node instanceof HTMLElement)) continue;
+
+        node.style.display = node.dataset.filesplitterPrevDisplay ?? "";
+        delete node.dataset.filesplitterHidden;
+        delete node.dataset.filesplitterPrevDisplay;
+    }
+}
+
+function hideAnchorChunkPayload(messageEl: HTMLElement, chunk: ChunkData) {
+    const contentCandidates = messageEl.querySelectorAll("[id^='message-content-'], [class*='messageContent'], [class*='markup']");
+    for (const candidate of Array.from(contentCandidates)) {
+        if (!(candidate instanceof HTMLElement) || isFileSplitterNode(candidate)) continue;
+        if ((candidate.textContent ?? "").includes("FileSplitterChunk")) markHidden(candidate);
+    }
+
+    const attachmentBlocks = messageEl.querySelectorAll([
+        "[class*='attachment']",
+        "[class*='mediaMosaic']",
+        "[class*='visualMediaItemContainer']",
+        "[class*='fileWrapper']",
+        "[class*='file']"
+    ].join(", "));
+
+    for (const block of Array.from(attachmentBlocks)) {
+        if (!(block instanceof HTMLElement) || isFileSplitterNode(block)) continue;
+        markHidden(block);
+    }
+
+    const attachmentHref = normalizeAttachmentUrl(chunk.url)?.split("?")[0] ?? null;
+    if (attachmentHref) {
+        for (const link of Array.from(messageEl.querySelectorAll("a[href]"))) {
+            if (!(link instanceof HTMLAnchorElement) || isFileSplitterNode(link)) continue;
+
+            const href = normalizeAttachmentUrl(link.href)?.split("?")[0] ?? null;
+            if (href !== attachmentHref) continue;
+
+            const target = link.closest("[class*='attachment'], [class*='fileWrapper'], [class*='file'], [class*='embed'], [class*='container'], a[href]");
+            if (target instanceof HTMLElement && target !== messageEl && !isFileSplitterNode(target)) markHidden(target);
+        }
+    }
+
+    for (const node of Array.from(messageEl.querySelectorAll("a, button, div, span"))) {
+        if (!(node instanceof HTMLElement) || isFileSplitterNode(node)) continue;
+
+        const text = node.textContent ?? "";
+        if (!/FileSplitterChunk|\.part\d{3}/i.test(text)) continue;
+
+        const target = node.closest("[id^='message-content-'], [class*='messageContent'], [class*='markup'], [class*='attachment'], [class*='fileWrapper'], [class*='file'], [class*='embed'], [class*='container'], a[href]");
+        if (target instanceof HTMLElement && target !== messageEl && !isFileSplitterNode(target)) {
+            markHidden(target);
+        } else {
+            markHidden(node);
+        }
+    }
+}
+
+function hideChunkMessages(key: string) {
+    const entry = cs[key];
+    const anchorChunk = getAnchorChunk(key);
+    if (!entry?.ch.length || !anchorChunk?.messageId) return;
+
+    for (const chunk of entry.ch) {
+        if (!chunk.channelId || !chunk.messageId) continue;
+
+        const messageEl = getMessageElement(chunk.channelId, chunk.messageId, chunk.url);
+        if (!messageEl) continue;
+
+        if (chunk.messageId !== anchorChunk.messageId) {
+            markHidden(messageEl);
+            continue;
+        }
+
+        hideAnchorChunkPayload(messageEl, chunk);
+    }
+}
+
+function hideKnownChunkMessages() {
+    for (const key of Object.keys(cs)) hideChunkMessages(key);
+}
+
+function scheduleHideSweep() {
+    if (pendingHideSweep !== undefined) return;
+
+    pendingHideSweep = requestAnimationFrame(() => {
+        pendingHideSweep = undefined;
+        hideKnownChunkMessages();
+    });
 }
 
 function getCompleteChunkCount(entry: ChunkStorageEntry) {
@@ -407,6 +547,7 @@ function processMessage(message: ChunkMessage) {
 
     const { key } = storeChunk(chunk);
     tryMergeChunks(key);
+    scheduleHideSweep();
     return true;
 }
 
@@ -427,12 +568,18 @@ function scanExistingMessages(channelId: string) {
 }
 
 function clearAllState() {
+    if (pendingHideSweep !== undefined) {
+        cancelAnimationFrame(pendingHideSweep);
+        pendingHideSweep = undefined;
+    }
+
     for (const result of mergedResults.values()) {
         if (result.objectUrl) URL.revokeObjectURL(result.objectUrl);
     }
 
     for (const key of Object.keys(cs)) delete cs[key];
     mergedResults.clear();
+    restoreHiddenChunkMessages();
     emitStoreChange();
 }
 
@@ -607,6 +754,10 @@ function FileSplitterAccessory({ message }: { message: ChunkMessage; }) {
         void ensureMergedResult(key, isInlinePreviewableImage(entry.ch[0].originalName));
     }, [key, count, total, complete]);
 
+    React.useEffect(() => {
+        if (key) scheduleHideSweep();
+    }, [key, count, total, complete, result?.status]);
+
     if (!chunk || !key || !entry || !isAnchor) return null;
     if (!complete) return <ProgressCard entry={entry} />;
     if (!result) return null;
@@ -728,12 +879,18 @@ export default definePlugin({
         clearAllState();
         addChatBarButton("FileSplitter", SplitButton, SplitIcon);
 
+        if (typeof MutationObserver !== "undefined" && document.body) {
+            hideObserver = new MutationObserver(() => scheduleHideSweep());
+            hideObserver.observe(document.body, { childList: true, subtree: true });
+        }
+
         const currentChannel = SelectedChannelStore.getChannelId();
         if (currentChannel) {
             scanExistingMessages(currentChannel);
             delayedChannelScan = setTimeout(() => scanExistingMessages(currentChannel), 1500);
         }
 
+        scheduleHideSweep();
         this._cleanupInterval = setInterval(pruneOldChunks, 60000);
     },
 
@@ -741,6 +898,8 @@ export default definePlugin({
         removeChatBarButton("FileSplitter");
         if (delayedChannelScan) clearTimeout(delayedChannelScan);
         if (this._cleanupInterval) clearInterval(this._cleanupInterval);
+        if (hideObserver) hideObserver.disconnect();
+        hideObserver = undefined;
         clearAllState();
     }
 });
