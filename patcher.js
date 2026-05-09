@@ -1183,6 +1183,9 @@ function runAppleScript(scriptText, args = []) {
 function runPowerShellScript(scriptText) {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "filesplitter-patcher-"));
     const scriptPath = path.join(tempDir, "script.ps1");
+    const selfCommand = process.pkg
+        ? { command: process.execPath, args: [] }
+        : { command: process.execPath, args: [__filename] };
 
     try {
         fs.writeFileSync(scriptPath, scriptText, "utf8");
@@ -1192,7 +1195,11 @@ function runPowerShellScript(scriptText) {
             "-STA",
             "-File", scriptPath
         ], {
-            encoding: "utf8"
+            encoding: "utf8",
+            env: {
+                ...process.env,
+                FILESPLITTER_PATCHER_SELF: JSON.stringify(selfCommand)
+            }
         });
     } finally {
         try {
