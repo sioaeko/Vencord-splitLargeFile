@@ -4,6 +4,19 @@ FileSplitter is a Vencord/Equicord plugin that works around Discord's upload lim
 
 The project now supports both source-based installs and a release patcher for already-installed clients, so users who do not want to clone/build a repo can still use the full plugin.
 
+## Quick Install
+
+Most users should install with the Windows patcher from the latest GitHub release:
+
+1. Fully close Discord.
+2. Download `FileSplitterPatcher.exe` from the [latest release](https://github.com/sioaeko/Vencord-splitLargeFile/releases/latest).
+3. Run `FileSplitterPatcher.exe`.
+4. Choose `Installed Equicord` or `Installed Vencord`.
+5. Click `Install / Update`.
+6. Reopen Discord and enable `FileSplitter` in the plugin list if it is not already enabled.
+
+If Discord is already running during install, restart it after the patcher finishes. The patcher creates a backup and includes restore/status actions.
+
 ## What It Does
 
 - Adds a **Split & Upload** button to the chat bar
@@ -79,12 +92,12 @@ The project now supports both source-based installs and a release patcher for al
 
 There are three supported ways to use FileSplitter.
 
-### Option 1: Release Patcher
+### Option 1: Release Patcher For Installed Clients
 
-Recommended for most users on Windows.
+Recommended for most Windows users who already use installed Equicord or Vencord.
 
-Release:
-https://github.com/sioaeko/Vencord-splitLargeFile/releases
+Download:
+https://github.com/sioaeko/Vencord-splitLargeFile/releases/latest
 
 Download `FileSplitterPatcher.exe` and choose the mode that matches your setup.
 
@@ -104,6 +117,8 @@ Supported release-patcher targets:
 5. Start Discord again.
 6. Enable `FileSplitter` in the plugin list if your client requires it.
 
+The patcher stores a backup next to your client files. Use `Restore` in the GUI, or `node patcher.js --restore` / `node patcher.js --restore-vencord`, to undo the patch.
+
 #### Source Repo (Vencord / Equicord)
 
 1. Run `FileSplitterPatcher.exe`.
@@ -111,9 +126,9 @@ Supported release-patcher targets:
 3. Select your local repo root.
 4. Build/inject your client again.
 
-### Option 2: Build From Source
+### Option 2: Userplugin Install From Source
 
-Use this if you already maintain a local Vencord/Equicord source checkout.
+Use this if you already maintain a local Vencord/Equicord source checkout and prefer a normal `src/userplugins` install instead of patching an installed client.
 
 The PR-ready plugin source lives in:
 
@@ -172,9 +187,9 @@ For an Equicord PR, copy the folder into `src/equicordplugins/fileSplitter/`, ad
    pnpm inject
    ```
 
-### Option 3: Run the CLI Patcher From This Repo
+### Option 3: Run The CLI Patcher From This Repo
 
-If you want to work directly from the repository:
+Use this if you cloned this repository and want to install, restore, or check status from the command line.
 
 ```bash
 npm install
@@ -192,6 +207,16 @@ node patcher.js --restore-vencord
 node patcher.js --status-vencord
 node patcher.js --install-source --repo C:\path\to\Vencord
 ```
+
+Command meaning:
+
+- `--install`: patch installed Equicord
+- `--restore`: restore installed Equicord from backup
+- `--status`: check installed Equicord patch status
+- `--install-vencord`: patch installed Vencord
+- `--restore-vencord`: restore installed Vencord from backup
+- `--status-vencord`: check installed Vencord patch status
+- `--install-source --repo <path>`: copy the source plugin into `src/userplugins/fileSplitter`
 
 ## How It Works In Practice
 
