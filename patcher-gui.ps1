@@ -68,6 +68,14 @@ $restartCheck.Size = New-Object System.Drawing.Size(360, 24)
 $restartCheck.Checked = $true
 $form.Controls.Add($restartCheck)
 
+$statusLabel = New-Object System.Windows.Forms.Label
+$statusLabel.Text = "Ready"
+$statusLabel.Location = New-Object System.Drawing.Point(20, 184)
+$statusLabel.Size = New-Object System.Drawing.Size(512, 18)
+$statusLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
+$statusLabel.ForeColor = [System.Drawing.Color]::DimGray
+$form.Controls.Add($statusLabel)
+
 function Show-GuiMessage {
     param(
         [string]$Title,
@@ -138,18 +146,19 @@ function Get-CliArgs {
         [void]$argList.Add($pathBox.Text)
     }
 
-    if (($Action -eq "install" -or $Action -eq "restore") -and $modeBox.SelectedIndex -lt 2 -and $restartCheck.Checked) {
-        [void]$argList.Add("--restart-client")
-    }
-
     return $argList
 }
 
 function Invoke-PatcherAction {
     param([string]$Action)
 
+    return Invoke-PatcherArgs (Get-CliArgs $Action)
+}
+
+function Invoke-PatcherArgs {
+    param([object]$CliArgs)
+
     $self = Get-PatcherSelf
-    $cliArgs = Get-CliArgs $Action
     $allArgs = New-Object System.Collections.Generic.List[string]
 
     $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -165,7 +174,7 @@ function Invoke-PatcherAction {
         }
     }
 
-    foreach ($arg in $cliArgs) {
+    foreach ($arg in $CliArgs) {
         [void]$allArgs.Add([string]$arg)
     }
 
@@ -188,6 +197,12 @@ function Invoke-PatcherAction {
     }
 }
 
+function Invoke-RestartAction {
+    $args = New-Object System.Collections.Generic.List[string]
+    [void]$args.Add("--restart-client-only")
+    return Invoke-PatcherArgs $args
+}
+
 function Get-ActionLabel {
     param([string]$Action)
 
@@ -196,6 +211,9 @@ function Get-ActionLabel {
     }
     if ($Action -eq "restore") {
         return "Restore complete."
+    }
+    if ($Action -eq "restart") {
+        return "Restart complete."
     }
     return "Status check complete."
 }
@@ -293,8 +311,8 @@ $cancelButton.Size = New-Object System.Drawing.Size(64, 32)
 $form.Controls.Add($cancelButton)
 
 $resultBox = New-Object System.Windows.Forms.TextBox
-$resultBox.Location = New-Object System.Drawing.Point(20, 250)
-$resultBox.Size = New-Object System.Drawing.Size(512, 110)
+$resultBox.Location = New-Object System.Drawing.Point(20, 246)
+$resultBox.Size = New-Object System.Drawing.Size(512, 116)
 $resultBox.Multiline = $true
 $resultBox.ReadOnly = $true
 $resultBox.ScrollBars = "Vertical"
@@ -311,6 +329,8 @@ $emit = {
     try {
         Set-Busy $true
         $hint.Text = "Working... this may take a moment."
+        $statusLabel.Text = "Working..."
+        $statusLabel.ForeColor = [System.Drawing.Color]::DimGray
         $resultBox.Visible = $false
         $resultBox.Text = ""
         $form.Refresh()
@@ -320,6 +340,28 @@ $emit = {
         $resultBox.Text = $message
         $resultBox.Visible = $true
         $hint.Text = Get-ActionLabel $action
+        $statusLabel.Text = Get-ActionLabel $action
+        $statusLabel.ForeColor = if ($result.ExitCode -eq 0) { [System.Drawing.Color]::ForestGreen } else { [System.Drawing.Color]::Firebrick }
+        $form.Refresh()
+
+        if ($result.ExitCode -eq 0 -and ($action -eq "install" -or $action -eq "restore") -and $modeBox.SelectedIndex -lt 2 -and $restartCheck.Checked) {
+            $hint.Text = "$(Get-ActionLabel $action) Restarting Discord..."
+            $form.Refresh()
+            $restartResult = Invoke-RestartAction
+            $restartMessage = Format-ActionOutput "restart" $restartResult
+            $message = "$message`r`n`r`n$restartMessage"
+            $resultBox.Text = $message
+            if ($restartResult.ExitCode -eq 0) {
+                $statusLabel.Text = "$(Get-ActionLabel $action) Discord restarted."
+                $statusLabel.ForeColor = [System.Drawing.Color]::ForestGreen
+            } else {
+                $statusLabel.Text = "$(Get-ActionLabel $action) Restart failed."
+                $statusLabel.ForeColor = [System.Drawing.Color]::DarkOrange
+            }
+            $hint.Text = $statusLabel.Text
+            $form.Refresh()
+        }
+
         Set-Busy $false
 
         if ($result.ExitCode -eq 0) {
@@ -330,6 +372,8 @@ $emit = {
     } catch {
         Set-Busy $false
         $hint.Text = "Action failed."
+        $statusLabel.Text = "Action failed."
+        $statusLabel.ForeColor = [System.Drawing.Color]::Firebrick
         $resultBox.Text = $_.Exception.Message
         $resultBox.Visible = $true
         Show-GuiMessage "FileSplitter Patcher Error" ($_.Exception.Message) ([System.Windows.Forms.MessageBoxIcon]::Error)

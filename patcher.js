@@ -1377,6 +1377,7 @@ function parseArgs(argv) {
         else if (arg === "--status-vencord") options.command = "status-vencord";
         else if (arg === "--install-source") options.command = "install-source";
         else if (arg === "--status-source") options.command = "status-source";
+        else if (arg === "--restart-client-only") options.command = "restart-client-only";
         else if (arg === "--gui") options.command = "gui";
         else if (arg === "--appdata") options.appData = args.shift();
         else if (arg === "--equicord-root") options.equicordRoot = args.shift();
@@ -1409,6 +1410,7 @@ function printHelp() {
     console.log(`  ${getBinaryLabel()} --restore-vencord --restart-client`);
     console.log(`  ${getBinaryLabel()} --install-source --repo <path>`);
     console.log(`  ${getBinaryLabel()} --status-source --repo <path>`);
+    console.log(`  ${getBinaryLabel()} --restart-client-only`);
     console.log("");
     console.log("Options:");
     console.log("  --appdata <path>         Override Equicord data root");
@@ -1517,6 +1519,12 @@ async function runCli(argv = process.argv.slice(2)) {
 
         if (options.command === "status-source") {
             printSourceStatus(statusSourceRepo(options));
+            return;
+        }
+
+        if (options.command === "restart-client-only") {
+            const restart = restartClient(options);
+            formatRestartLines(restart).forEach(line => console.log(line.replace(/\n/g, " ")));
             return;
         }
 
