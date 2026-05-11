@@ -24,6 +24,7 @@
     "assets": [
       "FileSplitter.tsx",
       "native.ts",
+      "styles.css",
       "src/equicordplugins/fileSplitter/index.tsx",
       "src/equicordplugins/fileSplitter/native.ts",
       "src/equicordplugins/fileSplitter/styles.css",

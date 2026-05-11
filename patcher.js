@@ -657,7 +657,7 @@ async function install(options = {}) {
         // Add IPC handler to patcher.js (main process)
         let patcherCode = fs.readFileSync(eqPatcherPath, "utf8");
         const ipcMarker = "/* FILESPLITTER_IPC */";
-        const ipcHandlerBody = 'try{require("electron").ipcMain.handle("FileSplitterFetchBlob",async function(e,u){var r=await require("electron").net.fetch(u);if(!r.ok)throw new Error("HTTP "+r.status);return Buffer.from(await r.arrayBuffer());});}catch(e){}';
+        const ipcHandlerBody = 'try{require("electron").ipcMain.handle("FileSplitterFetchBlob",async function(e,u){var p=new URL(u);if(p.protocol!=="https:"||["cdn.discordapp.com","media.discordapp.net"].indexOf(p.hostname)===-1)throw new Error("Unsupported attachment URL");var r=await require("electron").net.fetch(u);if(!r.ok)throw new Error("HTTP "+r.status);return Buffer.from(await r.arrayBuffer());});}catch(e){}';
         const ipcHandler = `\n${ipcMarker}\n${ipcHandlerBody}\n${ipcMarker}\n`;
         while (patcherCode.includes(ipcMarker)) {
             const start = patcherCode.indexOf(ipcMarker);
@@ -709,7 +709,7 @@ async function install(options = {}) {
 
 function injectVencordIpc(paths) {
     const IPC_MARKER = "/* FILESPLITTER_IPC */";
-    const ipcHandler = `\n${IPC_MARKER}\ntry{require("electron").ipcMain.handle("FileSplitterFetchBlob",async function(e,u){var r=await require("electron").net.fetch(u);if(!r.ok)throw new Error("HTTP "+r.status);return Buffer.from(await r.arrayBuffer());});}catch(e){}\n${IPC_MARKER}\n`;
+    const ipcHandler = `\n${IPC_MARKER}\ntry{require("electron").ipcMain.handle("FileSplitterFetchBlob",async function(e,u){var p=new URL(u);if(p.protocol!=="https:"||["cdn.discordapp.com","media.discordapp.net"].indexOf(p.hostname)===-1)throw new Error("Unsupported attachment URL");var r=await require("electron").net.fetch(u);if(!r.ok)throw new Error("HTTP "+r.status);return Buffer.from(await r.arrayBuffer());});}catch(e){}\n${IPC_MARKER}\n`;
 
     // Patch patcher.js (main process IPC handler)
     if (fs.existsSync(paths.patcherPath)) {

@@ -11,6 +11,14 @@ export async function fetchChunk(
     url: string
 ): Promise<{ success: boolean; data?: ArrayBuffer; contentType?: string; error?: string; }> {
     try {
+        const parsed = new URL(url);
+        if (
+            parsed.protocol !== "https:"
+            || !["cdn.discordapp.com", "media.discordapp.net"].includes(parsed.hostname)
+        ) {
+            return { success: false, error: "Unsupported attachment URL" };
+        }
+
         const response = await net.fetch(url);
         if (!response.ok) {
             return { success: false, error: `Fetch failed: ${response.status} ${response.statusText}` };

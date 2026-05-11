@@ -256,7 +256,7 @@ function hideChunkMessages(key){
 ensureHideStyle();
 var entry=cs[key];
 var anchorChunk=getAnchorChunk(key);
-if(!entry||!entry.ch.length||!anchorChunk||!anchorChunk.messageId)return;
+if(!entry||!entry.mg||!entry.ch.length||!anchorChunk||!anchorChunk.messageId)return;
 for(var i=0;i<entry.ch.length;i++){
 var chunk=entry.ch[i];
 if(!chunk.channelId||!chunk.messageId)continue;
@@ -517,7 +517,6 @@ var normalizedUrl=normalizeAttachmentUrl(attachmentUrl);
 if(!normalizedUrl)return;
 var stored=storeChunk(c,normalizedUrl);
 void tryMergeChunks(stored.key);
-hideChunkMessages(stored.key);
 }
 function processMessage(message){
 if(!message||!message.content||!message.attachments||!message.attachments.length)return false;

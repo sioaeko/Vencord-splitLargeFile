@@ -1,15 +1,35 @@
+/*
+ * Vencord, a Discord client mod
+ * Copyright (c) 2026 sioaeko and contributors
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 import { IpcMainInvokeEvent, net } from "electron";
 
-export async function fetchChunk(_: IpcMainInvokeEvent, url: string): Promise<{ status: number; data: string | null; }> {
+export async function fetchChunk(
+    _: IpcMainInvokeEvent,
+    url: string
+): Promise<{ success: boolean; data?: ArrayBuffer; contentType?: string; error?: string; }> {
     try {
-        // Use Electron's net module which shares Discord's session/cookies
-        const res = await net.fetch(url);
-        if (!res.ok) {
-            return { status: res.status, data: null };
+        const parsed = new URL(url);
+        if (
+            parsed.protocol !== "https:"
+            || !["cdn.discordapp.com", "media.discordapp.net"].includes(parsed.hostname)
+        ) {
+            return { success: false, error: "Unsupported attachment URL" };
         }
-        const buffer = await res.arrayBuffer();
-        return { status: res.status, data: Buffer.from(buffer).toString("base64") };
+
+        const response = await net.fetch(url);
+        if (!response.ok) {
+            return { success: false, error: `Fetch failed: ${response.status} ${response.statusText}` };
+        }
+
+        return {
+            success: true,
+            data: await response.arrayBuffer(),
+            contentType: response.headers.get("content-type") || ""
+        };
     } catch (e) {
-        return { status: -1, data: String(e) };
+        return { success: false, error: e instanceof Error ? e.message : "Unknown error" };
     }
 }
