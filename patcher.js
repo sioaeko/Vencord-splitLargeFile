@@ -809,6 +809,7 @@ function installSourceRepo(options = {}) {
     fs.copyFileSync(getAssetPath(path.join(sourceDir, "index.tsx")), path.join(pluginDir, "index.tsx"));
     fs.copyFileSync(getAssetPath(path.join(sourceDir, "native.ts")), path.join(pluginDir, "native.ts"));
     fs.copyFileSync(getAssetPath(path.join(sourceDir, "styles.css")), path.join(pluginDir, "styles.css"));
+    fs.copyFileSync(getAssetPath(path.join(sourceDir, "types.ts")), path.join(pluginDir, "types.ts"));
     return { repoRoot, pluginDir };
 }
 
@@ -820,7 +821,8 @@ function statusSourceRepo(options = {}) {
         pluginDir,
         indexExists: fs.existsSync(path.join(pluginDir, "index.tsx")),
         nativeExists: fs.existsSync(path.join(pluginDir, "native.ts")),
-        stylesExists: fs.existsSync(path.join(pluginDir, "styles.css"))
+        stylesExists: fs.existsSync(path.join(pluginDir, "styles.css")),
+        typesExists: fs.existsSync(path.join(pluginDir, "types.ts"))
     };
 }
 
@@ -893,6 +895,7 @@ function printSourceStatus(state) {
     console.log(`- index.tsx: ${state.indexExists ? "present" : "missing"}`);
     console.log(`- native.ts: ${state.nativeExists ? "present" : "missing"}`);
     console.log(`- styles.css: ${state.stylesExists ? "present" : "missing"}`);
+    console.log(`- types.ts: ${state.typesExists ? "present" : "missing"}`);
 }
 
 function printInstalledVencordStatus(state) {
@@ -1560,7 +1563,8 @@ async function runCli(argv = process.argv.slice(2)) {
                     `${sourceFlavorLabel} source plugin status`,
                     `index.tsx: ${sourceState.indexExists ? "present" : "missing"}`,
                     `native.ts: ${sourceState.nativeExists ? "present" : "missing"}`,
-                    `styles.css: ${sourceState.stylesExists ? "present" : "missing"}`
+                    `styles.css: ${sourceState.stylesExists ? "present" : "missing"}`,
+                    `types.ts: ${sourceState.typesExists ? "present" : "missing"}`
                 ].join("\n"));
                 return;
             }

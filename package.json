@@ -25,9 +25,11 @@
       "FileSplitter.tsx",
       "native.ts",
       "styles.css",
+      "types.ts",
       "src/equicordplugins/fileSplitter/index.tsx",
       "src/equicordplugins/fileSplitter/native.ts",
       "src/equicordplugins/fileSplitter/styles.css",
+      "src/equicordplugins/fileSplitter/types.ts",
       "injected-plugin.template.js",
       "patcher-gui.ps1",
       "patcher-gui.applescript"

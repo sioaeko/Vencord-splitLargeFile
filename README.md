@@ -9,7 +9,7 @@ The project now supports both source-based installs and a release patcher for al
 Most users should install with the release patcher from the latest GitHub release:
 
 1. Fully close Discord.
-2. Download the patcher for your OS from the [latest release](https://github.com/sioaeko/Vencord-splitLargeFile/releases/latest):
+2. Download the patcher for your OS from the [latest release](https://github.com/sioaeko/Equicord-splitLargeFile/releases/latest):
    - Windows: `FileSplitterPatcher.exe`
    - Apple Silicon macOS: `FileSplitterPatcher-macos-arm64.zip`
 3. Run the patcher.
@@ -99,7 +99,7 @@ There are three supported ways to use FileSplitter.
 Recommended for most Windows and Apple Silicon macOS users who already use installed Equicord or Vencord.
 
 Download:
-https://github.com/sioaeko/Vencord-splitLargeFile/releases/latest
+https://github.com/sioaeko/Equicord-splitLargeFile/releases/latest
 
 Download the patcher for your OS and choose the mode that matches your setup.
 
@@ -182,9 +182,10 @@ For an Equicord PR, copy the folder into `src/equicordplugins/fileSplitter/`, ad
    ```
 3. Copy the plugin files:
    ```bash
-   curl -o src/userplugins/fileSplitter/index.tsx https://raw.githubusercontent.com/sioaeko/Vencord-splitLargeFile/main/src/equicordplugins/fileSplitter/index.tsx
-   curl -o src/userplugins/fileSplitter/native.ts https://raw.githubusercontent.com/sioaeko/Vencord-splitLargeFile/main/src/equicordplugins/fileSplitter/native.ts
-   curl -o src/userplugins/fileSplitter/styles.css https://raw.githubusercontent.com/sioaeko/Vencord-splitLargeFile/main/src/equicordplugins/fileSplitter/styles.css
+   curl -o src/userplugins/fileSplitter/index.tsx https://raw.githubusercontent.com/sioaeko/Equicord-splitLargeFile/main/src/equicordplugins/fileSplitter/index.tsx
+   curl -o src/userplugins/fileSplitter/native.ts https://raw.githubusercontent.com/sioaeko/Equicord-splitLargeFile/main/src/equicordplugins/fileSplitter/native.ts
+   curl -o src/userplugins/fileSplitter/styles.css https://raw.githubusercontent.com/sioaeko/Equicord-splitLargeFile/main/src/equicordplugins/fileSplitter/styles.css
+   curl -o src/userplugins/fileSplitter/types.ts https://raw.githubusercontent.com/sioaeko/Equicord-splitLargeFile/main/src/equicordplugins/fileSplitter/types.ts
    ```
 4. Build and inject:
    ```bash
@@ -206,9 +207,10 @@ For an Equicord PR, copy the folder into `src/equicordplugins/fileSplitter/`, ad
    ```
 3. Copy the plugin files:
    ```bash
-   curl -o src/userplugins/fileSplitter/index.tsx https://raw.githubusercontent.com/sioaeko/Vencord-splitLargeFile/main/src/equicordplugins/fileSplitter/index.tsx
-   curl -o src/userplugins/fileSplitter/native.ts https://raw.githubusercontent.com/sioaeko/Vencord-splitLargeFile/main/src/equicordplugins/fileSplitter/native.ts
-   curl -o src/userplugins/fileSplitter/styles.css https://raw.githubusercontent.com/sioaeko/Vencord-splitLargeFile/main/src/equicordplugins/fileSplitter/styles.css
+   curl -o src/userplugins/fileSplitter/index.tsx https://raw.githubusercontent.com/sioaeko/Equicord-splitLargeFile/main/src/equicordplugins/fileSplitter/index.tsx
+   curl -o src/userplugins/fileSplitter/native.ts https://raw.githubusercontent.com/sioaeko/Equicord-splitLargeFile/main/src/equicordplugins/fileSplitter/native.ts
+   curl -o src/userplugins/fileSplitter/styles.css https://raw.githubusercontent.com/sioaeko/Equicord-splitLargeFile/main/src/equicordplugins/fileSplitter/styles.css
+   curl -o src/userplugins/fileSplitter/types.ts https://raw.githubusercontent.com/sioaeko/Equicord-splitLargeFile/main/src/equicordplugins/fileSplitter/types.ts
    ```
 4. Build and inject:
    ```bash
