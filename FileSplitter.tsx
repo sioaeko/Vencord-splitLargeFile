@@ -29,6 +29,7 @@ const CHUNK_TIMEOUT = 30 * 60 * 1000;
 const SCAN_DELAY = 1500;
 const PRUNE_INTERVAL = 60 * 1000;
 const MAX_PARALLEL_DOWNLOADS = 4;
+const MAX_CHUNKS = Math.ceil(MAX_FILE_SIZE / CHUNK_SIZE);
 
 const IMAGE_MIME: Record<string, string> = {
     avif: "image/avif", bmp: "image/bmp", gif: "image/gif",
@@ -69,6 +70,10 @@ function isImage(filename: string) {
     return mimeType(filename)?.startsWith("image/") ?? false;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return value != null && typeof value === "object" && !Array.isArray(value);
+}
+
 function normalizeUrl(url: string | null | undefined): string | null {
     if (!url) return null;
     try {
@@ -91,21 +96,25 @@ function isComplete(entry: ChunkEntry) {
 
 function parseChunkMeta(content: string | undefined): Omit<ChunkMeta, "type"> | null {
     if (!content) return null;
+    let c: unknown;
     try {
-        const c = JSON.parse(content);
-        const { type, index, total, originalName, originalSize, timestamp } = c;
-        if (
-            type === "FileSplitterChunk"
-            && Number.isInteger(index) && index >= 0
-            && Number.isInteger(total) && total > 0 && index < total
-            && typeof originalName === "string"
-            && typeof originalSize === "number"
-            && typeof timestamp === "number"
-        ) return { index, total, originalName, originalSize, timestamp };
+        c = JSON.parse(content);
     } catch {
         return null;
     }
-    return null;
+    if (!isRecord(c)) return null;
+
+    const { type, index, total, originalName, originalSize, timestamp } = c;
+    if (
+        type !== "FileSplitterChunk"
+        || typeof index !== "number" || !Number.isSafeInteger(index) || index < 0
+        || typeof total !== "number" || !Number.isSafeInteger(total) || total <= 0 || total > MAX_CHUNKS || index >= total
+        || typeof originalName !== "string" || originalName.length === 0
+        || typeof originalSize !== "number" || !Number.isFinite(originalSize) || originalSize <= 0 || originalSize > MAX_FILE_SIZE
+        || typeof timestamp !== "number" || !Number.isFinite(timestamp) || timestamp <= 0
+    ) return null;
+
+    return { index, total, originalName, originalSize, timestamp };
 }
 
 function getChunkFromMessage(message: Message): ChunkData | null {
@@ -531,11 +540,11 @@ export default definePlugin({
 
     patches: [
         {
-            find: ".NITRO_NOTIFICATION,[",
+            find: '.CUSTOM_GIFT?""',
             replacement: [
                 {
-                    match: /renderContentOnly:\i}=\i;/,
-                    replace: "$&if($self.shouldHideChunkMessage(arguments[0].message)) return null;"
+                    match: /message:(\i),message:\{id:\i\}.{0,200}renderContentOnly:\i\}=\i;/,
+                    replace: "$&if($self.shouldHideChunkMessage($1)) return null;"
                 },
                 {
                     match: /childrenMessageContent:(\i),/g,
@@ -544,7 +553,7 @@ export default definePlugin({
             ]
         },
         {
-            find: "this.renderAttachments(",
+            find: "}renderStickersAccessories(",
             replacement: {
                 match: /(?<=\i=)this\.render(?:Attachments|Embeds|StickersAccessories|ComponentAccessories)\((\i)\)/g,
                 replace: "$self.isChunkMessage($1)?null:$&"
