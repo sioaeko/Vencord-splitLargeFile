@@ -1,12 +1,14 @@
 var _FS_=__DP_FN__({
 name:"FileSplitter",
 description:"Splits large files into 10MB chunks to bypass Discord's default limit.",
-authors:[{id:1234567890n,name:"sioaeko"}],
+authors:[{id:1505110745258397849n,name:"sioaeko"}],
 start(){
 var self=this;
 var C=Vencord.Webpack.Common;
 var CHUNK_SIZE=10*1024*1024;
 var CHUNK_TIMEOUT=30*60*1000;
+var CHUNK_UPLOADS_PER_WINDOW=4;
+var CHUNK_UPLOAD_WINDOW=5500;
 var cs={};
 var mergedResults=new Map();
 var processedMessageIds=new Set();
@@ -565,6 +567,12 @@ uploader.upload();
 reject(new Error(e&&e.message?e.message:JSON.stringify(e)));
 }});
 }
+function wait(ms){
+return new Promise(function(resolve){setTimeout(resolve,ms);});
+}
+function shouldPauseForUploadWindow(index,total){
+return index+1<total&&(index+1)%CHUNK_UPLOADS_PER_WINDOW===0;
+}
 var SplitIcon=function(){
 return C.React.createElement("svg",{width:"24",height:"24",viewBox:"0 0 24 24",fill:"currentColor"},
 C.React.createElement("path",{d:"M14 2H6C4.9 2 4 2.9 4 4v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zM6 20V4h7v5h5v11H6zm8-4h-4v-2h4v-2l3 3-3 3v-2z"}));
@@ -608,6 +616,10 @@ var metadata={type:"FileSplitterChunk",index:i,total:totalChunks,originalName:fi
 var chunkFile=new File([chunkBlob],file.name+".part"+String(i+1).padStart(3,"0"),{type:"application/octet-stream"});
 await uploadChunk(channelId,chunkFile,metadata);
 setStatus(Math.round(((i+1)/totalChunks)*100)+"%");
+if(shouldPauseForUploadWindow(i,totalChunks)){
+setStatus(Math.round(((i+1)/totalChunks)*100)+"% (rate limit pause)");
+await wait(CHUNK_UPLOAD_WINDOW);
+}
 }
 C.Toasts.show({message:"Uploaded "+totalChunks+" parts for "+file.name,id:C.Toasts.genId(),type:C.Toasts.Type.SUCCESS});
 setStatus(null);

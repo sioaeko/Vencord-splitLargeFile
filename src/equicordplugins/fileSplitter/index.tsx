@@ -9,6 +9,7 @@ import "./styles.css";
 import { ChatBarButton, ChatBarButtonFactory } from "@api/ChatButtons";
 import ErrorBoundary from "@components/ErrorBoundary";
 import { classNameFactory } from "@utils/css";
+import { isObject } from "@utils/misc";
 import definePlugin, { PluginNative } from "@utils/types";
 import { chooseFile, saveFile } from "@utils/web";
 import { Message } from "@vencord/discord-types";
@@ -30,6 +31,8 @@ const SCAN_DELAY = 1500;
 const PRUNE_INTERVAL = 60 * 1000;
 const MAX_PARALLEL_DOWNLOADS = 4;
 const MAX_CHUNKS = Math.ceil(MAX_FILE_SIZE / CHUNK_SIZE);
+const CHUNK_UPLOADS_PER_WINDOW = 4;
+const CHUNK_UPLOAD_WINDOW = 5500;
 
 const IMAGE_MIME: Record<string, string> = {
     avif: "image/avif", bmp: "image/bmp", gif: "image/gif",
@@ -39,17 +42,15 @@ const IMAGE_MIME: Record<string, string> = {
 const chunkStore: Record<string, ChunkEntry> = {};
 const mergedResults = new Map<string, MergedResult>();
 const storeListeners = new Set<() => void>();
-let storeVersion = 0;
 
 function emitChange() {
-    storeVersion++;
     for (const listener of storeListeners) listener();
 }
 
 function useStore() {
-    const [, setVersion] = React.useState(storeVersion);
+    const [, setVersion] = React.useState(0);
     React.useEffect(() => {
-        const listener = () => setVersion(storeVersion);
+        const listener = () => setVersion(v => v + 1);
         storeListeners.add(listener);
         return () => {
             storeListeners.delete(listener);
@@ -68,10 +69,6 @@ function mimeType(filename: string) {
 
 function isImage(filename: string) {
     return mimeType(filename)?.startsWith("image/") ?? false;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return value != null && typeof value === "object" && !Array.isArray(value);
 }
 
 function normalizeUrl(url: string | null | undefined): string | null {
@@ -102,9 +99,9 @@ function parseChunkMeta(content: string | undefined): Omit<ChunkMeta, "type"> | 
     } catch {
         return null;
     }
-    if (!isRecord(c)) return null;
+    if (!isObject(c)) return null;
 
-    const { type, index, total, originalName, originalSize, timestamp } = c;
+    const { type, index, total, originalName, originalSize, timestamp } = c as Record<string, unknown>;
     if (
         type !== "FileSplitterChunk"
         || typeof index !== "number" || !Number.isSafeInteger(index) || index < 0
@@ -323,6 +320,14 @@ function uploadChunk(channelId: string, file: File, meta: ChunkMeta): Promise<vo
     });
 }
 
+function wait(ms: number) {
+    return new Promise<void>(resolve => setTimeout(resolve, ms));
+}
+
+function shouldPauseForUploadWindow(index: number, total: number) {
+    return index + 1 < total && (index + 1) % CHUNK_UPLOADS_PER_WINDOW === 0;
+}
+
 const SplitIcon = () => (
     <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
         <path d="M14 2H6C4.9 2 4 2.9 4 4v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zM6 20V4h7v5h5v11H6zm8-4h-4v-2h4v-2l3 3-3 3v-2z" />
@@ -496,6 +501,10 @@ const SplitButton: ChatBarButtonFactory = ({ isMainChat, channel }) => {
                     timestamp
                 });
                 setStatus(`${Math.round(((i + 1) / totalChunks) * 100)}%`);
+                if (shouldPauseForUploadWindow(i, totalChunks)) {
+                    setStatus(`${Math.round(((i + 1) / totalChunks) * 100)}% (rate limit pause)`);
+                    await wait(CHUNK_UPLOAD_WINDOW);
+                }
             }
             Toasts.show({ message: `Uploaded ${totalChunks} parts for ${file.name}`, id: Toasts.genId(), type: Toasts.Type.SUCCESS });
         } catch (e) {
@@ -527,7 +536,7 @@ export default definePlugin({
     tags: ["Chat", "Utility"],
     authors: [
         {
-            id: 1234567890n,
+            id: 1505110745258397849n,
             name: "sioaeko"
         }
     ],
